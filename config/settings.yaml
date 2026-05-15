@@ -1,0 +1,44 @@
+channel:
+  niche: "amazing facts"
+  name: "FactsUnlocked"
+  language: "en-US"
+  category_id: "27"        # Education on YouTube
+  default_tags:
+    - facts
+    - amazingfacts
+    - didyouknow
+    - shorts
+    - education
+    - viral
+
+video:
+  width: 1080
+  height: 1920             # Vertical — optimised for Shorts
+  fps: 24
+  scenes_count: 6          # ~10s per scene = 60s total
+  font_size: 72
+  text_color: "white"
+  text_shadow: true
+  transition_duration: 0.5
+  background_music_volume: 0.08
+
+groq:
+  model: "llama-3.1-70b-versatile"
+  temperature: 0.8
+  max_tokens: 2000
+
+tts:
+  voice: "en-US-AriaNeural"
+  rate: "+0%"
+  volume: "+0%"
+
+image:
+  provider: "pollinations"  # free, no API key
+  style: "cinematic, photorealistic, 4k, dramatic lighting"
+  negative: "text, watermark, blurry, low quality, nsfw"
+
+youtube:
+  privacy: "public"
+  made_for_kids: false
+  notify_subscribers: true
+  shorts_hashtag: "#Shorts"

@@ -1,0 +1,114 @@
+name: 🎬 Daily Video Pipeline
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # Every day at 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip YouTube upload (test mode)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: video-pipeline
+  cancel-in-progress: false
+
+jobs:
+  # ── Job 1: Pre-flight checks ─────────────────────────────────────────────
+  preflight:
+    name: Pre-flight credential check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install validation deps
+        run: pip install -q requests edge-tts
+
+      - name: Validate all credentials and APIs
+        env:
+          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+          YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          PYTHONPATH:            ${{ github.workspace }}/src
+        run: python scripts/validate_credentials.py
+
+  # ── Job 2: Create & publish video ────────────────────────────────────────
+  create-and-publish:
+    name: Generate & Publish Video
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: preflight   # only run if pre-flight passes
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg fonts-dejavu-core fonts-liberation python3-dev libffi-dev
+          ffmpeg -version | head -1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Create workspace
+        run: mkdir -p workspace
+
+      - name: Run video pipeline
+        env:
+          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+          YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_PRIVACY:       ${{ vars.YOUTUBE_PRIVACY || 'public' }}
+          DRY_RUN:               ${{ github.event.inputs.dry_run || 'false' }}
+          PYTHONPATH:            ${{ github.workspace }}/src
+        run: python src/main.py
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-log-${{ github.run_number }}
+          path: workspace/**/run_log.json
+          retention-days: 30
+
+      - name: Upload video file
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_number }}
+          path: workspace/**/final_video.mp4
+          retention-days: 7
+
+  # ── Job 3: Alert on any failure ──────────────────────────────────────────
+  notify-failure:
+    name: Failure alert
+    runs-on: ubuntu-latest
+    needs: [preflight, create-and-publish]
+    if: failure()
+
+    steps:
+      - name: Write failure summary
+        run: |
+          echo "## ❌ FactsUnlocked pipeline failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Logs:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "::error::Pipeline failed — see ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
