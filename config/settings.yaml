@@ -23,7 +23,7 @@ video:
   background_music_volume: 0.08
 
 groq:
-  model: "llama-3.1-70b-versatile"
+  model: "llama-3.3-70b-versatile"
   temperature: 0.8
   max_tokens: 2000
 
