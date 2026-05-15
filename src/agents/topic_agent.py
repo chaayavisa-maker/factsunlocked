@@ -70,7 +70,7 @@ Respond ONLY with valid JSON, no markdown:
 }}"""
 
         response = self.client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.85,
             max_tokens=600,
