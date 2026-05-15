@@ -24,14 +24,13 @@ class TopicAgent:
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
     def _get_trending_searches(self) -> list[str]:
-        """Fetch Google Trends — falls back gracefully if blocked."""
+        """Fetch Google Trends via trendspyg RSS — falls back gracefully if unavailable."""
         try:
-            from pytrends.request import TrendReq
-            pt = TrendReq(hl="en-US", tz=360, timeout=(10, 25))
-            df = pt.trending_searches(pn="united_states")
-            return df[0].tolist()[:20]
+            from trendspyg import download_google_trends_rss
+            trends = download_google_trends_rss(geo="US")
+            return [t["trend"] for t in trends[:20]]
         except Exception as e:
-            logger.warning(f"pytrends unavailable: {e}. Using built-in seed topics.")
+            logger.warning(f"trendspyg unavailable: {e}. Using built-in seed topics.")
             return [
                 "science facts", "history secrets", "nature wonders",
                 "space discoveries", "animal behavior", "human body",
