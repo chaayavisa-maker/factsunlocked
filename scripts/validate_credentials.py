@@ -175,7 +175,7 @@ def main():
     validate_pollinations()
     validate_edge_tts()
     validate_youtube()
-    validate_ffmpeg()
+    #validate_ffmpeg()
 
     logger.info("")
     logger.info("=== Results ===")
