@@ -1,108 +1,94 @@
-import os
 import json
-import re
+import os
 from groq import Groq
-from tenacity import retry, stop_after_attempt, wait_exponential
-from utils.logger import setup_logger
-
-logger = setup_logger(__name__)
 
 
 class ScriptAgent:
-    def __init__(self):
+    def __init__(self, settings: dict):
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        self.model = "llama-3.1-70b-versatile"
+        self.niche = settings["channel"]["niche"]
+        self.visual_style = settings["channel"]["visual_style"]
+        self.scenes_count = settings["video"]["scenes_count"]
+        # hook + payoff take 2 slots; the rest are body facts
+        self.body_count = self.scenes_count - 2
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
-    def write_script(self, topic: dict, num_scenes: int = 6) -> dict:
-        """
-        Writes a complete video script with per-scene narration,
-        image prompts, and on-screen text.
-        Returns a dict with 'scenes' list and 'outro'.
-        """
-        prompt = f"""You are a top YouTube Shorts scriptwriter. Write a COMPLETE script for a 60-second video.
+    def generate(self, topic: str) -> dict:
+        prompt = f"""You write viral YouTube Shorts scripts about {self.niche}.
 
-Topic: {topic['title']}
-Core fact: {topic['topic']}
-Hook: {topic['hook']}
-Visual style: {topic.get('scenes_theme', 'cinematic, dramatic')}
+Output ONLY valid JSON. No markdown. No explanation. No preamble.
 
-Write exactly {num_scenes} scenes. Each scene is ~10 seconds when narrated at normal pace.
-
-Rules:
-- Scene 1 MUST open with the hook — grab attention instantly
-- Build curiosity, reveal the fact gradually, end with a mind-blowing conclusion
-- Narration per scene: 2-3 SHORT sentences, 25-35 words max
-- Image prompt: detailed, visual, cinematic — describes WHAT TO SHOW on screen
-- On-screen text: 1 bold statement, < 8 words, complements the narration
-- No filler words. Every sentence must earn its place.
-
-Respond ONLY with valid JSON, no markdown fences:
+Format:
 {{
-  "scenes": [
-    {{
-      "scene_number": 1,
-      "narration": "narration text read aloud — 25-35 words",
-      "image_prompt": "detailed Stable Diffusion prompt for the background image",
-      "on_screen_text": "BOLD SHORT TEXT < 8 WORDS",
-      "duration_hint": 10
-    }}
-  ],
-  "outro": "Subscribe for more mind-blowing facts every day!"
-}}"""
+  "hook": "...",
+  "scenes": ["fact 1", "fact 2", ...],
+  "payoff": "...",
+  "title": "...",
+  "image_queries": ["visual description 1", ...]
+}}
+
+RULES:
+
+hook — max 8 words. A question or shocking claim that stops scrolling.
+  GOOD: "Your skeleton completely replaces itself every decade."
+  GOOD: "This planet rains molten glass sideways."
+  BAD: "Did you know that..."
+  BAD: "Today we will learn about..."
+
+scenes — exactly {self.body_count} facts. Each fact max 15 words. Short. Punchy. Astonishing.
+  Every fact must feel like a revelation, not a textbook line.
+
+payoff — 1 sentence, max 12 words. Rewards the viewer for watching to the end.
+  Example: "And scientists still cannot explain why."
+
+title — max 60 characters. Must include a number or a shocking claim.
+  Example: "5 Space Facts That Will Break Your Brain"
+
+image_queries — exactly {self.scenes_count} vivid visual descriptions, one per scene (hook → facts → payoff).
+  These are used to generate images. Be specific and visual.
+  Example: "dramatic close-up of a neutron star surface glowing orange"
+  Do NOT include text or watermarks in descriptions.
+
+Topic: {topic}"""
 
         response = self.client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.75,
-            max_tokens=2000,
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You output only valid JSON. No markdown, no preamble, no code fences, no explanation."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.9,
+            max_tokens=1000
         )
 
         text = response.choices[0].message.content.strip()
-        text = re.sub(r"```json|```", "", text).strip()
+        # Strip any accidental markdown fences
+        text = text.replace("```json", "").replace("```", "").strip()
 
-        try:
-            script = json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            script = json.loads(match.group()) if match else self._fallback_script(topic, num_scenes)
+        script = json.loads(text)
 
-        # Validate and repair
-        if "scenes" not in script or len(script["scenes"]) < num_scenes:
-            logger.warning("Script incomplete — using fallback filler for missing scenes")
-            script = self._pad_scenes(script, topic, num_scenes)
+        # Validate structure — fill defaults if LLM misbehaves
+        if "hook" not in script:
+            script["hook"] = f"You won't believe this {self.niche} fact."
+        if "scenes" not in script or not isinstance(script["scenes"], list):
+            script["scenes"] = [f"Fact about {topic}."] * self.body_count
+        if "payoff" not in script:
+            script["payoff"] = "Science is stranger than fiction."
+        if "title" not in script:
+            script["title"] = f"Mind-Blowing {topic} Facts"
+        if "image_queries" not in script or len(script["image_queries"]) < self.scenes_count:
+            script["image_queries"] = [topic] * self.scenes_count
 
-        script["topic"] = topic
-        logger.info(f"Script ready: {len(script['scenes'])} scenes")
+        # Ensure exactly the right counts
+        script["scenes"] = script["scenes"][:self.body_count]
+        script["image_queries"] = script["image_queries"][:self.scenes_count]
+
         return script
 
-    def _fallback_script(self, topic: dict, num_scenes: int) -> dict:
-        """Emergency fallback if Groq returns unparseable output."""
-        hook = topic.get("hook", topic["title"])
-        fact = topic.get("topic", topic["title"])
-        scenes = []
-        templates = [
-            (f"{hook}. What you're about to learn will change how you see the world.", f"photo of {fact}, dramatic lighting, cinematic", "WAIT FOR THIS"),
-            (f"Here's the mind-blowing part: {fact}.", f"extreme closeup of {fact}, 4k", "MIND BLOWN"),
-            ("Scientists were stunned when they discovered this. Most people have no idea.", "scientists in laboratory, discovery moment, dramatic", "NOBODY KNOWS THIS"),
-            ("The implications are even more surprising. Let's break it down.", "infographic style, educational, clean", "HERE'S WHY"),
-            ("This changes everything we thought we knew about the world.", f"wide shot of {fact}, epic scale, golden hour", "EVERYTHING CHANGES"),
-            ("Follow for more facts that will absolutely blow your mind every single day.", "galaxy stars space, wonder, awe inspiring, cinematic", "FOLLOW FOR MORE"),
-        ]
-        for i, (narr, img, txt) in enumerate(templates[:num_scenes], 1):
-            scenes.append({
-                "scene_number": i,
-                "narration": narr,
-                "image_prompt": img,
-                "on_screen_text": txt,
-                "duration_hint": 10,
-            })
-        return {"scenes": scenes, "outro": "Subscribe for more!"}
-
-    def _pad_scenes(self, script: dict, topic: dict, target: int) -> dict:
-        """Pads a short script to the required number of scenes."""
-        fallback = self._fallback_script(topic, target)
-        existing = script.get("scenes", [])
-        while len(existing) < target:
-            existing.append(fallback["scenes"][len(existing)])
-        script["scenes"] = existing[:target]
-        return script
+    def get_full_narration_text(self, script: dict) -> str:
+        """Build the complete narration string from script."""
+        parts = [script["hook"]] + script["scenes"] + [script["payoff"]]
+        return ". ".join(parts)

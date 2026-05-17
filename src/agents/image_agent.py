@@ -1,90 +1,60 @@
-import asyncio
-import aiohttp
-import aiofiles
+import os
+import time
+import requests
 from pathlib import Path
 from urllib.parse import quote
-from tenacity import retry, stop_after_attempt, wait_exponential
-from utils.logger import setup_logger
-
-logger = setup_logger(__name__)
-
-POLLINATIONS_URL = "https://image.pollinations.ai/prompt/{prompt}"
-
-# Style suffix appended to every prompt for consistent quality
-STYLE_SUFFIX = (
-    ", cinematic, photorealistic, high detail, 4k, dramatic lighting, "
-    "sharp focus, professional photography, no text, no watermark"
-)
-NEGATIVE_CONCEPTS = "blurry, low quality, text, watermark, nsfw, cartoon, drawing"
 
 
 class ImageAgent:
-    def __init__(self, width: int = 1080, height: int = 1920):
-        self.width = width
-        self.height = height
+    def __init__(self, settings: dict):
+        self.visual_style = settings["channel"]["visual_style"]
+        self.width = 1080
+        self.height = 1920
+        self.timeout = 90
+        self.max_retries = 3
 
-    def _build_url(self, prompt: str, seed: int) -> str:
-        enhanced = prompt + STYLE_SUFFIX
-        encoded = quote(enhanced)
+    def _build_url(self, query: str) -> str:
+        # Append consistent style to every prompt
+        full_prompt = f"{query}, {self.visual_style}"
+        encoded = quote(full_prompt)
         return (
-            f"{POLLINATIONS_URL.format(prompt=encoded)}"
-            f"?width={self.width}&height={self.height}"
-            f"&seed={seed}&nologo=true&enhance=true"
+            f"https://image.pollinations.ai/prompt/{encoded}"
+            f"?width={self.width}&height={self.height}&nologo=true&enhance=true"
         )
 
-    @retry(stop=stop_after_attempt(4), wait=wait_exponential(multiplier=2, min=3, max=20))
-    async def _download_image(
-        self,
-        session: aiohttp.ClientSession,
-        prompt: str,
-        output_path: Path,
-        seed: int,
-    ) -> Path:
-        url = self._build_url(prompt, seed)
-        logger.info(f"  Generating image for scene (seed={seed})...")
+    def _download(self, url: str, save_path: str) -> bool:
+        for attempt in range(self.max_retries):
+            try:
+                resp = requests.get(url, timeout=self.timeout, stream=True)
+                if resp.status_code == 200 and len(resp.content) > 10_000:
+                    with open(save_path, "wb") as f:
+                        f.write(resp.content)
+                    return True
+            except Exception as e:
+                print(f"Image download attempt {attempt + 1} failed: {e}")
+                time.sleep(5)
+        return False
 
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=90)) as resp:
-            resp.raise_for_status()
-            content = await resp.read()
+    def generate_all(self, script: dict, workspace: Path) -> list:
+        """Generate one image per scene. Returns list of local file paths."""
+        queries = script.get("image_queries", [])
+        image_paths = []
 
-        if len(content) < 5000:
-            raise ValueError(f"Image too small ({len(content)} bytes) — likely an error page")
+        for i, query in enumerate(queries):
+            save_path = str(workspace / f"image_{i:02d}.jpg")
+            url = self._build_url(query)
 
-        async with aiofiles.open(output_path, "wb") as f:
-            await f.write(content)
+            print(f"Generating image {i+1}/{len(queries)}: {query[:60]}...")
+            success = self._download(url, save_path)
 
-        logger.info(f"  ✓ Image saved: {output_path.name} ({len(content)//1024}KB)")
-        return output_path
+            if not success:
+                # Fallback: use a simpler prompt
+                fallback_url = self._build_url(query.split(",")[0])
+                success = self._download(fallback_url, save_path)
 
-    async def generate_all_images(
-        self, script: dict, workspace: Path
-    ) -> list[Path]:
-        """
-        Generates one image per scene concurrently.
-        Returns ordered list of image paths.
-        """
-        images_dir = workspace / "images"
-        images_dir.mkdir(exist_ok=True)
+            if success:
+                image_paths.append(save_path)
+            else:
+                print(f"WARNING: Image {i} failed entirely, skipping.")
 
-        scenes = script["scenes"]
-        tasks = []
-
-        connector = aiohttp.TCPConnector(limit=3)  # polite concurrency
-        async with aiohttp.ClientSession(connector=connector) as session:
-            for scene in scenes:
-                n = scene["scene_number"]
-                out = images_dir / f"scene_{n:02d}.jpg"
-                prompt = scene["image_prompt"]
-                seed = 1000 + n * 37  # deterministic but varied seeds
-                tasks.append(self._download_image(session, prompt, out, seed))
-
-            # Stagger requests slightly to avoid hammering the API
-            results = []
-            for i, task in enumerate(tasks):
-                if i > 0:
-                    await asyncio.sleep(1.5)
-                result = await task
-                results.append(result)
-
-        logger.info(f"All {len(results)} images generated.")
-        return results
+        return image_paths
