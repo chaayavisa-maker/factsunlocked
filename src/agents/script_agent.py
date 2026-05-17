@@ -6,7 +6,7 @@ from groq import Groq
 class ScriptAgent:
     def __init__(self, settings: dict):
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
-        self.model = "llama-3.1-70b-versatile"
+        self.model = "llama-3.3-70b-versatile"
         self.niche = settings["channel"]["niche"]
         self.visual_style = settings["channel"]["visual_style"]
         self.scenes_count = settings["video"]["scenes_count"]
