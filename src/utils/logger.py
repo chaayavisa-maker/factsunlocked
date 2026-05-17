@@ -12,3 +12,7 @@ def get_logger(name: str) -> logging.Logger:
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
     return logger
+
+
+# Alias — some scripts import setup_logger instead of get_logger
+setup_logger = get_logger
