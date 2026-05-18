@@ -3,6 +3,10 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+# Shared encoder settings — every intermediate clip must use these so that
+# the final concat step can stream-copy without re-encoding.
+_ENCODE_FLAGS = ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p"]
+
 
 class VideoAgent:
     def __init__(self, settings: dict):
@@ -40,9 +44,7 @@ class VideoAgent:
             "-i", img_path,
             "-vf", vf,
             "-t", str(duration),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-pix_fmt", "yuv420p",
+            *_ENCODE_FLAGS,
             out_path
         ]
         result = subprocess.run(cmd, capture_output=True)
@@ -68,10 +70,14 @@ class VideoAgent:
 
     def _add_caption(self, video_path: str, text: str, out_path: str):
         if not text.strip():
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", video_path, "-c", "copy", out_path],
-                check=True, capture_output=True
+            # No caption — still re-encode with consistent settings so all
+            # segments are bitstream-compatible for the concat copy step.
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", video_path, *_ENCODE_FLAGS, out_path],
+                capture_output=True
             )
+            if result.returncode != 0:
+                raise RuntimeError(f"Caption (passthrough) failed:\n{result.stderr.decode()}")
             return
 
         escaped = self._escape_drawtext(text)
@@ -97,7 +103,7 @@ class VideoAgent:
             "ffmpeg", "-y",
             "-i", video_path,
             "-vf", vf,
-            "-c:a", "copy",
+            *_ENCODE_FLAGS,          # FIX: explicit codec keeps all segments identical
             out_path
         ]
         result = subprocess.run(cmd, capture_output=True)
@@ -160,19 +166,22 @@ class VideoAgent:
             scene_paths.append(cap_path)
 
         # 2. Concatenate scenes
+        # All segments use identical codec/profile/pix_fmt so -c copy is safe.
         concat_list = str(ws / "concat.txt")
         with open(concat_list, "w") as f:
             for p in scene_paths:
                 f.write(f"file '{p}'\n")
 
         raw_video = str(ws / "video_silent.mp4")
-        subprocess.run([
+        result = subprocess.run([
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", concat_list,
             "-c", "copy",
             raw_video
-        ], check=True, capture_output=True)
+        ], capture_output=True)                  # FIX: surface errors properly
+        if result.returncode != 0:
+            raise RuntimeError(f"Concat failed:\n{result.stderr.decode()}")
 
         # 3. Mix narration + optional background music
         final_path = str(ws / "final_video.mp4")
