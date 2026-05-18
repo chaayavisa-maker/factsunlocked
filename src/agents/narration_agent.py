@@ -16,8 +16,13 @@ VOICE_OPTIONS = [
 
 
 class NarrationAgent:
-    def __init__(self, voice: str = "en-US-AriaNeural", rate: str = "+5%"):
-        self.voice = voice
+    def __init__(self, settings: dict = None, voice: str = "en-US-AriaNeural", rate: str = "+5%"):
+        # Accept settings dict (new main.py style) or plain kwargs (legacy)
+        if settings is not None:
+            tts_cfg = settings.get("tts", {})
+            self.voice = tts_cfg.get("voice", voice)
+        else:
+            self.voice = voice
         self.rate = rate  # slight speed-up keeps Shorts punchy
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
@@ -51,9 +56,15 @@ class NarrationAgent:
 
         paths = []
         for scene in script["scenes"]:
-            n = scene["scene_number"]
+            # scenes can be dicts with scene_number/narration, or plain strings
+            if isinstance(scene, dict):
+                n = scene.get("scene_number", len(paths) + 1)
+                text = scene.get("narration", "").strip()
+            else:
+                n = len(paths) + 1
+                text = str(scene).strip()
+
             out = audio_dir / f"scene_{n:02d}.mp3"
-            text = scene["narration"].strip()
             await self._generate_clip(text, out)
             paths.append(out)
 
@@ -65,6 +76,42 @@ class NarrationAgent:
 
         logger.info(f"All {len(paths)} audio clips generated.")
         return paths
+
+    async def generate(self, script: dict, workspace: Path) -> Path:
+        """
+        Public method called by main.py.
+        Generates all per-scene clips then concatenates them into a single
+        narration.mp3 in the workspace root. Returns the combined file path.
+        """
+        clips = await self.generate_all_narration(script, workspace)
+
+        if not clips:
+            raise RuntimeError("NarrationAgent: no audio clips were generated.")
+
+        # If only one clip (unlikely but safe), just return it directly
+        if len(clips) == 1:
+            return clips[0]
+
+        # Concatenate all clips into one file using moviepy
+        combined_path = workspace / "narration.mp3"
+        try:
+            from moviepy.editor import AudioFileClip, concatenate_audioclips
+
+            audio_clips = [AudioFileClip(str(p)) for p in clips]
+            combined = concatenate_audioclips(audio_clips)
+            combined.write_audiofile(str(combined_path), verbose=False, logger=None)
+
+            for c in audio_clips:
+                c.close()
+            combined.close()
+
+            logger.info(f"Narration combined → {combined_path}")
+            return combined_path
+
+        except Exception as e:
+            logger.warning(f"Concatenation failed ({e}), returning clip list head as fallback.")
+            # Last-resort fallback: return first clip so pipeline doesn't crash
+            return clips[0]
 
     async def get_audio_duration(self, audio_path: Path) -> float:
         """Returns duration in seconds using moviepy."""
