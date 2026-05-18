@@ -170,7 +170,8 @@ class VideoAgent:
         concat_list = str(ws / "concat.txt")
         with open(concat_list, "w") as f:
             for p in scene_paths:
-                f.write(f"file '{p}'\n")
+                f.write(f"file '{Path(p).resolve()}'\n")
+
 
         raw_video = str(ws / "video_silent.mp4")
         result = subprocess.run([
