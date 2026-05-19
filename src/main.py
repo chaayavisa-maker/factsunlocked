@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
@@ -18,6 +19,62 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Pipeline state — persists step results to JSON so runs are resumable
+# ---------------------------------------------------------------------------
+
+class PipelineState:
+    """
+    Writes pipeline_state.json inside the workspace after every step.
+    On re-run with the same PIPELINE_RUN_ID the completed steps are skipped.
+    """
+
+    def __init__(self, workspace: Path):
+        self.path = workspace / "pipeline_state.json"
+        self._data: dict = self._load()
+
+    def _load(self) -> dict:
+        if self.path.exists():
+            try:
+                return json.loads(self.path.read_text())
+            except Exception as exc:
+                logger.warning(f"Could not read state file ({exc}) — starting fresh.")
+        return {"steps": {}}
+
+    def _save(self):
+        self.path.write_text(json.dumps(self._data, indent=2, default=str))
+
+    def is_done(self, step: str) -> bool:
+        return self._data["steps"].get(step, {}).get("status") == "done"
+
+    def result(self, step: str):
+        """Return the saved output of a completed step."""
+        return self._data["steps"].get(step, {}).get("output")
+
+    def mark_done(self, step: str, output=None):
+        self._data["steps"][step] = {"status": "done", "output": output}
+        self._save()
+
+    def reset_step(self, step: str):
+        """Force a step to re-run (e.g. its output file disappeared)."""
+        self._data["steps"].pop(step, None)
+        self._save()
+
+
+def _file_ok(path) -> bool:
+    """True if path is a non-empty string pointing to an existing file."""
+    return bool(path) and Path(str(path)).exists()
+
+
+def _skip(step: str, value):
+    logger.info(f"  ⏭  [{step}] already complete — skipping.")
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+
 def load_settings() -> dict:
     with open("config/settings.yaml") as f:
         return yaml.safe_load(f)
@@ -25,62 +82,142 @@ def load_settings() -> dict:
 
 async def run_pipeline():
     settings = load_settings()
-    run_id = str(uuid.uuid4())[:8]
+
+    # Use PIPELINE_RUN_ID env var when resuming; generate a fresh one otherwise.
+    run_id = os.environ.get("PIPELINE_RUN_ID") or str(uuid.uuid4())[:8]
     workspace = Path(f"workspace/{run_id}")
     workspace.mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"=== Pipeline run {run_id} ===")
+    state = PipelineState(workspace)
 
-    # 1. Topic — original agent, takes no arguments
-    topic_agent = TopicAgent()
-    topic = topic_agent.get_topic()
-    logger.info(f"Topic: {topic}")
-
-    # 2. Script — rewritten, takes settings
-    script_agent = ScriptAgent(settings)
-    script = script_agent.generate(topic)
-    logger.info(f"Hook: {script['hook']}")
-    logger.info(f"Title: {script['title']}")
-
-    # 3. Images — rewritten, takes settings
-    image_agent = ImageAgent(settings)
-    image_paths = image_agent.generate_all(script, workspace)
-    logger.info(f"Images: {len(image_paths)} generated")
-
-    if not image_paths:
-        raise RuntimeError("No images generated — aborting.")
-
-    # 4. Narration — original agent, takes no arguments
-    narration_agent = NarrationAgent()
-    narration_path = await narration_agent.generate(script, workspace)
-    logger.info(f"Narration: {narration_path}")
-
-    # 5. Background music — new agent, takes settings
-    music_agent = MusicAgent(settings)
-    music_path = music_agent.get_track(workspace)
-    logger.info(f"Music: {music_path or 'unavailable'}")
-
-    # 6. Video — rewritten, takes settings
-    video_agent = VideoAgent(settings)
-    video_path = video_agent.assemble(
-        str(workspace),
-        image_paths,
-        narration_path,
-        music_path,
-        script,
+    logger.info("=" * 60)
+    logger.info(f"Pipeline run_id : {run_id}")
+    logger.info(f"Workspace       : {workspace}")
+    logger.info(
+        "To resume if this run fails, re-trigger the workflow "
+        f"with run_id = {run_id}"
     )
-    logger.info(f"Video: {video_path}")
+    logger.info("=" * 60)
 
-    # 7. SEO — original agent, takes no arguments
-    seo_agent = SEOAgent()
-    metadata = seo_agent.generate(topic, script, extra_description=MUSIC_CREDIT)
-    logger.info(f"Title: {metadata['title']}")
+    # ── Step 1: Topic ──────────────────────────────────────────────────────
+    STEP = "topic"
+    if state.is_done(STEP):
+        topic = _skip(STEP, state.result(STEP))
+    else:
+        topic = TopicAgent().get_topic()
+        state.mark_done(STEP, topic)
+        logger.info(f"  ✓ [{STEP}] {topic}")
 
-    # 8. Upload
-    publisher = YouTubePublisher()
-    video_id = publisher.upload(video_path, metadata)
-    logger.info(f"Published: https://youtube.com/shorts/{video_id}")
+    # ── Step 2: Script ─────────────────────────────────────────────────────
+    STEP = "script"
+    if state.is_done(STEP):
+        script = _skip(STEP, state.result(STEP))
+    else:
+        script = ScriptAgent(settings).generate(topic)
+        state.mark_done(STEP, script)
+        logger.info(f"  ✓ [{STEP}] hook='{script['hook']}'  title='{script['title']}'")
 
+    # ── Step 3: Images ─────────────────────────────────────────────────────
+    STEP = "images"
+    if state.is_done(STEP):
+        image_paths = state.result(STEP) or []
+        missing = [p for p in image_paths if not _file_ok(p)]
+        if missing:
+            logger.warning(
+                f"  ⚠  [{STEP}] {len(missing)} image file(s) missing from disk "
+                "— regenerating all images."
+            )
+            state.reset_step(STEP)
+        else:
+            _skip(STEP, image_paths)
+
+    if not state.is_done(STEP):
+        image_paths = ImageAgent(settings).generate_all(script, workspace)
+        if not image_paths:
+            raise RuntimeError("No images generated — aborting.")
+        state.mark_done(STEP, image_paths)
+        logger.info(f"  ✓ [{STEP}] {len(image_paths)} images generated.")
+
+    # ── Step 4: Narration ──────────────────────────────────────────────────
+    STEP = "narration"
+    if state.is_done(STEP):
+        narration_path = state.result(STEP)
+        if not _file_ok(narration_path):
+            logger.warning(f"  ⚠  [{STEP}] file missing from disk — regenerating.")
+            state.reset_step(STEP)
+        else:
+            _skip(STEP, narration_path)
+
+    if not state.is_done(STEP):
+        narration_agent = NarrationAgent(settings)
+        narration_path = str(await narration_agent.generate(script, workspace))
+        state.mark_done(STEP, narration_path)
+        logger.info(f"  ✓ [{STEP}] {narration_path}")
+
+    # ── Step 5: Music ──────────────────────────────────────────────────────
+    STEP = "music"
+    if state.is_done(STEP):
+        music_path = state.result(STEP)  # may be None (unavailable)
+        if music_path and not _file_ok(music_path):
+            logger.warning(f"  ⚠  [{STEP}] file missing from disk — re-downloading.")
+            state.reset_step(STEP)
+        else:
+            _skip(STEP, music_path)
+
+    if not state.is_done(STEP):
+        music_path = MusicAgent(settings).get_track(workspace)
+        state.mark_done(STEP, str(music_path) if music_path else None)
+        logger.info(f"  ✓ [{STEP}] {music_path or 'unavailable'}")
+
+    # ── Step 6: Video assembly ─────────────────────────────────────────────
+    STEP = "video"
+    if state.is_done(STEP):
+        video_path = state.result(STEP)
+        if not _file_ok(video_path):
+            logger.warning(f"  ⚠  [{STEP}] file missing from disk — re-rendering.")
+            state.reset_step(STEP)
+        else:
+            _skip(STEP, video_path)
+
+    if not state.is_done(STEP):
+        video_path = VideoAgent(settings).assemble(
+            str(workspace),
+            image_paths,
+            narration_path,
+            music_path,
+            script,
+        )
+        state.mark_done(STEP, str(video_path))
+        logger.info(f"  ✓ [{STEP}] {video_path}")
+
+    # ── Step 7: SEO metadata ───────────────────────────────────────────────
+    STEP = "seo"
+    if state.is_done(STEP):
+        metadata = _skip(STEP, state.result(STEP))
+    else:
+        metadata = SEOAgent().generate(
+            topic, script, extra_description=MUSIC_CREDIT
+        )
+        state.mark_done(STEP, metadata)
+        logger.info(f"  ✓ [{STEP}] title='{metadata['title']}'")
+
+    # ── Step 8: Upload ─────────────────────────────────────────────────────
+    STEP = "upload"
+    if state.is_done(STEP):
+        video_id = _skip(STEP, state.result(STEP))
+    else:
+        if os.environ.get("DRY_RUN", "false").lower() == "true":
+            video_id = "DRY_RUN"
+            logger.info(f"  ✓ [{STEP}] DRY_RUN — upload skipped.")
+        else:
+            publisher = YouTubePublisher()
+            video_id = publisher.upload(Path(video_path), metadata)
+            logger.info(f"  ✓ [{STEP}] https://youtube.com/shorts/{video_id}")
+        state.mark_done(STEP, video_id)
+
+    logger.info("=" * 60)
+    logger.info(f"Pipeline complete  run_id={run_id}  video_id={video_id}")
+    logger.info("=" * 60)
     return video_id
 
 
