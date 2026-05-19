@@ -16,8 +16,12 @@ class SEOAgent:
     def __init__(self):
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
+    def generate(self, topic: dict, script: dict, extra_description: str = "") -> dict:
+        """Alias used by main.py — delegates to generate_metadata."""
+        return self.generate_metadata(topic, script, extra_description=extra_description)
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
-    def generate_metadata(self, topic: dict, script: dict) -> dict:
+    def generate_metadata(self, topic: dict, script: dict, extra_description: str = "") -> dict:
         """
         Generates YouTube-optimised title, description, and tags.
         Inserts #Shorts + affiliate CTA into the description.
@@ -83,6 +87,8 @@ Respond ONLY with valid JSON, no markdown:
         hashtag_line = " ".join(hashtags[:8])
 
         description = meta.get("description", topic.get("topic", ""))
+        if extra_description:
+            description = f"{description}\n\n{extra_description}"
         description = f"{description}\n\n{hashtag_line}"
         description = description[:MAX_DESC_LEN]
 
