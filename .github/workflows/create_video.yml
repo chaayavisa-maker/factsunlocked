@@ -5,6 +5,12 @@ on:
     - cron: "0 9 * * *"   # Every day at 09:00 UTC
   workflow_dispatch:
     inputs:
+      run_id:
+        description: >
+          Resume a previous run — paste the run_id printed in a failed
+          run's summary (leave blank to start a fresh run).
+        required: false
+        default: ""
       dry_run:
         description: "Skip YouTube upload (test mode)"
         required: false
@@ -45,12 +51,69 @@ jobs:
   create-and-publish:
     name: Generate & Publish Video
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    needs: preflight   # only run if pre-flight passes
+    timeout-minutes: 60
+    needs: preflight
+
+    outputs:
+      run_id: ${{ steps.resolve_run_id.outputs.value }}
 
     steps:
       - uses: actions/checkout@v4
 
+      # ── Determine run_id ────────────────────────────────────────────────
+      - name: Resolve run_id
+        id: resolve_run_id
+        run: |
+          if [ -n "${{ github.event.inputs.run_id }}" ]; then
+            RUN_ID="${{ github.event.inputs.run_id }}"
+            echo "▶ Resuming run: $RUN_ID"
+            MODE="resume"
+          else
+            RUN_ID=$(python3 -c "import uuid; print(str(uuid.uuid4())[:8])")
+            echo "▶ Fresh run: $RUN_ID"
+            MODE="fresh"
+          fi
+
+          echo "value=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## 🎬 Pipeline run_id: \`$RUN_ID\`"
+            echo ""
+            if [ "$MODE" = "resume" ]; then
+              echo "▶ **Resuming** a previous run — completed steps will be skipped."
+            else
+              echo "▶ **Fresh run** — all steps will execute."
+            fi
+            echo ""
+            echo "---"
+            echo "### ♻️ How to resume if this run fails"
+            echo "1. Fix the code and push."
+            echo "2. Go to **Actions → Daily Video Pipeline → Run workflow**."
+            echo "3. Paste \`$RUN_ID\` into the **run_id** field."
+            echo "4. Click **Run workflow** — already-completed steps will be skipped."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Restore workspace from a previous run (cache miss = fresh start) ─
+      - name: Restore workspace cache
+        id: cache_restore
+        uses: actions/cache/restore@v4
+        with:
+          path: workspace/
+          # Exact key includes run_number so each attempt can save its own entry.
+          # restore-keys prefix-matches the most recent save for this run_id.
+          key: pipeline-${{ steps.resolve_run_id.outputs.value }}-${{ github.run_number }}
+          restore-keys: |
+            pipeline-${{ steps.resolve_run_id.outputs.value }}-
+
+      - name: Report cache status
+        run: |
+          if [ "${{ steps.cache_restore.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ Workspace restored from cache — completed steps will be skipped."
+          else
+            echo "ℹ️  No cache found — starting from scratch."
+          fi
+
+      # ── System deps ─────────────────────────────────────────────────────
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -66,11 +129,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Create workspace
-        run: mkdir -p workspace
-
+      # ── Run the pipeline ─────────────────────────────────────────────────
       - name: Run video pipeline
         env:
+          PIPELINE_RUN_ID:       ${{ steps.resolve_run_id.outputs.value }}
           GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
           YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -80,23 +142,34 @@ jobs:
           PYTHONPATH:            ${{ github.workspace }}/src
         run: python src/main.py
 
-      - name: Upload run log
+      # ── Always save workspace so failed runs can be resumed ──────────────
+      - name: Save workspace cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: workspace/
+          key: pipeline-${{ steps.resolve_run_id.outputs.value }}-${{ github.run_number }}
+
+      # ── Artifacts ────────────────────────────────────────────────────────
+      - name: Upload pipeline state (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: run-log-${{ github.run_number }}
-          path: workspace/**/run_log.json
+          name: pipeline-state-${{ steps.resolve_run_id.outputs.value }}
+          path: workspace/${{ steps.resolve_run_id.outputs.value }}/pipeline_state.json
+          if-no-files-found: ignore
+          overwrite: true
           retention-days: 30
 
-      - name: Upload video file
+      - name: Upload video
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.run_number }}
-          path: workspace/**/final_video.mp4
+          name: video-${{ steps.resolve_run_id.outputs.value }}
+          path: workspace/${{ steps.resolve_run_id.outputs.value }}/final_video.mp4
           retention-days: 7
 
-  # ── Job 3: Alert on any failure ──────────────────────────────────────────
+  # ── Job 3: Alert on failure (with resume instructions) ───────────────────
   notify-failure:
     name: Failure alert
     runs-on: ubuntu-latest
@@ -106,9 +179,21 @@ jobs:
     steps:
       - name: Write failure summary
         run: |
-          echo "## ❌ FactsUnlocked pipeline failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Time:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "**Logs:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          RUN_ID="${{ needs.create-and-publish.outputs.run_id }}"
+          {
+            echo "## ❌ FactsUnlocked pipeline failed"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Run number | #${{ github.run_number }} |"
+            echo "| Time | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo "| Logs | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |"
+            echo ""
+            echo "### ♻️ Resume this run after fixing the code"
+            echo "1. Push your fix."
+            echo "2. **Actions → Daily Video Pipeline → Run workflow**."
+            echo "3. Set **run_id** = \`$RUN_ID\`"
+            echo "4. Click **Run workflow**."
+          } >> "$GITHUB_STEP_SUMMARY"
+
           echo "::error::Pipeline failed — see ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
