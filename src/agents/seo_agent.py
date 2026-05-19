@@ -16,24 +16,38 @@ class SEOAgent:
     def __init__(self):
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
-    def generate(self, topic: dict, script: dict, extra_description: str = "") -> dict:
-        """Alias used by main.py — delegates to generate_metadata."""
+    def generate(self, topic, script: dict, extra_description: str = "") -> dict:
+        """Public entry point called by main.py — delegates to generate_metadata."""
         return self.generate_metadata(topic, script, extra_description=extra_description)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
-    def generate_metadata(self, topic: dict, script: dict, extra_description: str = "") -> dict:
+    def generate_metadata(self, topic, script: dict, extra_description: str = "") -> dict:
         """
         Generates YouTube-optimised title, description, and tags.
-        Inserts #Shorts + affiliate CTA into the description.
+        topic can be a plain string or a dict with a 'title' key.
         """
-        narrations = " ".join(
-            s["narration"] for s in script.get("scenes", [])
-        )
+        # ── Normalise topic ────────────────────────────────────────────────
+        if isinstance(topic, dict):
+            topic_title = topic.get("title", str(topic))
+            topic_fact = topic.get("topic", topic_title)
+        else:
+            topic_title = str(topic)
+            topic_fact = str(topic)
+
+        # ── Build narration summary from scenes (string or dict) ───────────
+        raw_scenes = script.get("scenes", [])
+        narration_parts = []
+        for s in raw_scenes:
+            if isinstance(s, dict):
+                narration_parts.append(s.get("narration", ""))
+            else:
+                narration_parts.append(str(s))
+        narrations = " ".join(narration_parts)
 
         prompt = f"""You are a YouTube SEO expert specialised in viral Shorts.
 
-Video topic: {topic['title']}
-Core fact: {topic.get('topic', topic['title'])}
+Video topic: {topic_title}
+Core fact: {topic_fact}
 Script summary: {narrations[:600]}
 
 Generate YouTube metadata. Rules:
@@ -66,17 +80,15 @@ Respond ONLY with valid JSON, no markdown:
             match = re.search(r"\{.*\}", text, re.DOTALL)
             meta = json.loads(match.group()) if match else {}
 
-        # --- Sanitise and enforce limits ---
-        title = meta.get("title", topic["title"])[:MAX_TITLE_LEN]
+        # ── Sanitise and enforce limits ────────────────────────────────────
+        title = meta.get("title", topic_title)[:MAX_TITLE_LEN]
 
         tags = meta.get("tags", [])
-        # Ensure core tags always present
         must_have = ["Shorts", "shorts", "facts", "didyouknow", "amazingfacts", "viral"]
         for t in must_have:
             if t not in tags:
                 tags.insert(0, t)
 
-        # Trim tag budget
         tag_budget, final_tags = 0, []
         for t in tags:
             if tag_budget + len(t) + 1 <= MAX_TAGS:
@@ -86,7 +98,7 @@ Respond ONLY with valid JSON, no markdown:
         hashtags = meta.get("hashtags", ["#Shorts", "#Facts", "#DidYouKnow"])
         hashtag_line = " ".join(hashtags[:8])
 
-        description = meta.get("description", topic.get("topic", ""))
+        description = meta.get("description", topic_fact)
         if extra_description:
             description = f"{description}\n\n{extra_description}"
         description = f"{description}\n\n{hashtag_line}"
@@ -96,7 +108,7 @@ Respond ONLY with valid JSON, no markdown:
             "title": title,
             "description": description,
             "tags": final_tags,
-            "category_id": "27",          # Education
+            "category_id": "27",       # Education
             "default_language": "en",
         }
 
