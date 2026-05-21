@@ -1,12 +1,10 @@
 import asyncio
-import aiofiles
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-# Best voices for engaging short-form content
 VOICE_OPTIONS = [
     "en-US-AriaNeural",      # warm, natural female — primary
     "en-US-GuyNeural",       # confident male — alternative
@@ -17,13 +15,13 @@ VOICE_OPTIONS = [
 
 class NarrationAgent:
     def __init__(self, settings: dict = None, voice: str = "en-US-AriaNeural", rate: str = "+5%"):
-        # Accept settings dict (new main.py style) or plain kwargs (legacy)
         if settings is not None:
             tts_cfg = settings.get("tts", {})
             self.voice = tts_cfg.get("voice", voice)
+            self.rate = tts_cfg.get("rate", rate)
         else:
             self.voice = voice
-        self.rate = rate  # slight speed-up keeps Shorts punchy
+            self.rate = rate
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
     async def _generate_clip(self, text: str, output_path: Path) -> Path:
@@ -38,61 +36,99 @@ class NarrationAgent:
         )
         await communicate.save(str(output_path))
 
-        if not output_path.exists() or output_path.stat().st_size < 1000:
+        if not output_path.exists() or output_path.stat().st_size < 500:
             raise RuntimeError(f"TTS output missing or empty: {output_path}")
 
         logger.info(f"  ✓ Audio clip: {output_path.name}")
         return output_path
 
-    async def generate_all_narration(
-        self, script: dict, workspace: Path
-    ) -> list[Path]:
+    def _get_clip_duration(self, path: Path) -> float:
+        """Return duration of an audio clip in seconds using ffprobe."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(path),
+                ],
+                capture_output=True, text=True, check=True,
+            )
+            return float(result.stdout.strip())
+        except Exception:
+            return 0.0
+
+    async def generate_all_narration(self, script: dict, workspace: Path) -> list[Path]:
         """
-        Generates one MP3 per scene, plus an outro clip.
-        Returns ordered list of audio paths matching scenes.
+        Generates one MP3 per segment in order:
+          hook → scenes[0..n] → payoff → outro
+        Returns ordered list of audio paths with their durations.
         """
         audio_dir = workspace / "audio"
         audio_dir.mkdir(exist_ok=True)
 
-        paths = []
-        for scene in script["scenes"]:
-            # scenes can be dicts with scene_number/narration, or plain strings
+        # ── Build ordered segment list ────────────────────────────────────
+        segments: list[tuple[str, str]] = []  # (label, text)
+
+        # Hook
+        hook = script.get("hook", "").strip()
+        if hook:
+            segments.append(("hook", hook))
+
+        # Body scenes
+        for i, scene in enumerate(script.get("scenes", [])):
             if isinstance(scene, dict):
-                n = scene.get("scene_number", len(paths) + 1)
                 text = scene.get("narration", "").strip()
             else:
-                n = len(paths) + 1
                 text = str(scene).strip()
+            if text:
+                segments.append((f"scene_{i+1:02d}", text))
 
-            out = audio_dir / f"scene_{n:02d}.mp3"
+        # Payoff
+        payoff = script.get("payoff", "").strip()
+        if payoff:
+            segments.append(("payoff", payoff))
+
+        # Outro CTA
+        outro = script.get("outro", "Subscribe for more mind-blowing space facts every day!")
+        segments.append(("outro", outro))
+
+        # ── Generate clips ────────────────────────────────────────────────
+        paths: list[Path] = []
+        for label, text in segments:
+            out = audio_dir / f"{label}.mp3"
             await self._generate_clip(text, out)
             paths.append(out)
 
-        # Outro clip
-        outro_text = script.get("outro", "Subscribe for more mind-blowing facts every day!")
-        outro_path = audio_dir / "outro.mp3"
-        await self._generate_clip(outro_text, outro_path)
-        paths.append(outro_path)
-
-        logger.info(f"All {len(paths)} audio clips generated.")
+        logger.info(f"Generated {len(paths)} audio clips: {[p.name for p in paths]}")
         return paths
 
-    async def generate(self, script: dict, workspace: Path) -> Path:
+    async def generate(self, script: dict, workspace: Path) -> tuple[Path, list[float]]:
         """
         Public method called by main.py.
-        Generates all per-scene clips then concatenates them into a single
-        narration.mp3 in the workspace root. Returns the combined file path.
+        Returns (combined_narration_path, per_scene_durations).
+
+        per_scene_durations maps to the image_paths list:
+          [hook_duration, scene1_duration, ..., payoff_duration]
+        The outro is audio-only and NOT counted in scene durations.
         """
         clips = await self.generate_all_narration(script, workspace)
 
         if not clips:
             raise RuntimeError("NarrationAgent: no audio clips were generated.")
 
-        # If only one clip (unlikely but safe), just return it directly
-        if len(clips) == 1:
-            return clips[0]
+        # Measure per-clip durations BEFORE concat so video can time each scene
+        durations = [self._get_clip_duration(p) for p in clips]
 
-        # Concatenate all clips into one file using moviepy
+        # The last clip is the outro — it's included in audio but the last
+        # image (payoff) should already have its own clip before it.
+        # scene_durations = all clips except outro
+        scene_durations = durations[:-1]  # exclude outro
+        outro_clip = clips[-1]
+        scene_clips = clips[:-1]
+
+        # Concatenate all clips (including outro) into narration.mp3
         combined_path = workspace / "narration.mp3"
         try:
             from moviepy.editor import AudioFileClip, concatenate_audioclips
@@ -105,13 +141,12 @@ class NarrationAgent:
                 c.close()
             combined.close()
 
-            logger.info(f"Narration combined → {combined_path}")
-            return combined_path
-
+            logger.info(f"Narration combined → {combined_path} ({sum(durations):.1f}s total)")
         except Exception as e:
-            logger.warning(f"Concatenation failed ({e}), returning clip list head as fallback.")
-            # Last-resort fallback: return first clip so pipeline doesn't crash
-            return clips[0]
+            logger.warning(f"Concatenation failed ({e}), falling back to first clip.")
+            return clips[0], scene_durations
+
+        return combined_path, scene_durations
 
     async def get_audio_duration(self, audio_path: Path) -> float:
         """Returns duration in seconds using moviepy."""

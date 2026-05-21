@@ -48,7 +48,6 @@ class PipelineState:
         return self._data["steps"].get(step, {}).get("status") == "done"
 
     def result(self, step: str):
-        """Return the saved output of a completed step."""
         return self._data["steps"].get(step, {}).get("output")
 
     def mark_done(self, step: str, output=None):
@@ -56,13 +55,11 @@ class PipelineState:
         self._save()
 
     def reset_step(self, step: str):
-        """Force a step to re-run (e.g. its output file disappeared)."""
         self._data["steps"].pop(step, None)
         self._save()
 
 
 def _file_ok(path) -> bool:
-    """True if path is a non-empty string pointing to an existing file."""
     return bool(path) and Path(str(path)).exists()
 
 
@@ -83,7 +80,6 @@ def load_settings() -> dict:
 async def run_pipeline():
     settings = load_settings()
 
-    # Use PIPELINE_RUN_ID env var when resuming; generate a fresh one otherwise.
     run_id = os.environ.get("PIPELINE_RUN_ID") or str(uuid.uuid4())[:8]
     workspace = Path(f"workspace/{run_id}")
     workspace.mkdir(parents=True, exist_ok=True)
@@ -93,10 +89,7 @@ async def run_pipeline():
     logger.info("=" * 60)
     logger.info(f"Pipeline run_id : {run_id}")
     logger.info(f"Workspace       : {workspace}")
-    logger.info(
-        "To resume if this run fails, re-trigger the workflow "
-        f"with run_id = {run_id}"
-    )
+    logger.info(f"To resume: set PIPELINE_RUN_ID={run_id}")
     logger.info("=" * 60)
 
     # ── Step 1: Topic ──────────────────────────────────────────────────────
@@ -124,8 +117,7 @@ async def run_pipeline():
         missing = [p for p in image_paths if not _file_ok(p)]
         if missing:
             logger.warning(
-                f"  ⚠  [{STEP}] {len(missing)} image file(s) missing from disk "
-                "— regenerating all images."
+                f"  ⚠  [{STEP}] {len(missing)} image file(s) missing — regenerating."
             )
             state.reset_step(STEP)
         else:
@@ -139,27 +131,35 @@ async def run_pipeline():
         logger.info(f"  ✓ [{STEP}] {len(image_paths)} images generated.")
 
     # ── Step 4: Narration ──────────────────────────────────────────────────
+    # Returns (combined_mp3_path, per_scene_durations)
     STEP = "narration"
     if state.is_done(STEP):
-        narration_path = state.result(STEP)
+        saved = state.result(STEP)
+        narration_path = saved["path"] if isinstance(saved, dict) else saved
+        scene_durations = saved.get("durations") if isinstance(saved, dict) else None
         if not _file_ok(narration_path):
-            logger.warning(f"  ⚠  [{STEP}] file missing from disk — regenerating.")
+            logger.warning(f"  ⚠  [{STEP}] file missing — regenerating.")
             state.reset_step(STEP)
         else:
-            _skip(STEP, narration_path)
+            _skip(STEP, saved)
 
     if not state.is_done(STEP):
-        narration_agent = NarrationAgent(settings)
-        narration_path = str(await narration_agent.generate(script, workspace))
-        state.mark_done(STEP, narration_path)
-        logger.info(f"  ✓ [{STEP}] {narration_path}")
+        narration_path, scene_durations = await NarrationAgent(settings).generate(
+            script, workspace
+        )
+        narration_path = str(narration_path)
+        state.mark_done(STEP, {"path": narration_path, "durations": scene_durations})
+        logger.info(
+            f"  ✓ [{STEP}] {narration_path} "
+            f"(scenes: {[f'{d:.1f}s' for d in scene_durations]})"
+        )
 
     # ── Step 5: Music ──────────────────────────────────────────────────────
     STEP = "music"
     if state.is_done(STEP):
-        music_path = state.result(STEP)  # may be None (unavailable)
+        music_path = state.result(STEP)
         if music_path and not _file_ok(music_path):
-            logger.warning(f"  ⚠  [{STEP}] file missing from disk — re-downloading.")
+            logger.warning(f"  ⚠  [{STEP}] file missing — re-downloading.")
             state.reset_step(STEP)
         else:
             _skip(STEP, music_path)
@@ -174,7 +174,7 @@ async def run_pipeline():
     if state.is_done(STEP):
         video_path = state.result(STEP)
         if not _file_ok(video_path):
-            logger.warning(f"  ⚠  [{STEP}] file missing from disk — re-rendering.")
+            logger.warning(f"  ⚠  [{STEP}] file missing — re-rendering.")
             state.reset_step(STEP)
         else:
             _skip(STEP, video_path)
@@ -186,6 +186,7 @@ async def run_pipeline():
             narration_path,
             music_path,
             script,
+            scene_durations=scene_durations,   # ← per-scene timing
         )
         state.mark_done(STEP, str(video_path))
         logger.info(f"  ✓ [{STEP}] {video_path}")
@@ -195,9 +196,7 @@ async def run_pipeline():
     if state.is_done(STEP):
         metadata = _skip(STEP, state.result(STEP))
     else:
-        metadata = SEOAgent().generate(
-            topic, script, extra_description=MUSIC_CREDIT
-        )
+        metadata = SEOAgent().generate(topic, script, extra_description=MUSIC_CREDIT)
         state.mark_done(STEP, metadata)
         logger.info(f"  ✓ [{STEP}] title='{metadata['title']}'")
 

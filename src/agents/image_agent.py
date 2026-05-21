@@ -1,8 +1,20 @@
 import os
 import time
+import random
 import requests
 from pathlib import Path
 from urllib.parse import quote
+
+
+# Negative prompt — appended to every request to steer away from bad outputs
+_NEGATIVE = (
+    "text, watermark, logo, caption, subtitle, words, letters, blurry, "
+    "low quality, ugly, deformed, cartoon, anime, drawing, painting, "
+    "cropped, oversaturated, noise, grain"
+)
+
+# Fixed seeds per session for reproducibility within a run
+_SEEDS = [42, 137, 256, 512, 1024, 2048, 4096, 8192]
 
 
 class ImageAgent:
@@ -10,29 +22,46 @@ class ImageAgent:
         self.visual_style = settings["channel"]["visual_style"]
         self.width = 1080
         self.height = 1920
-        self.timeout = 90
-        self.max_retries = 3
+        self.timeout = 120
+        self.max_retries = 4
 
-    def _build_url(self, query: str) -> str:
-        # Append consistent style to every prompt
-        full_prompt = f"{query}, {self.visual_style}"
-        encoded = quote(full_prompt)
-        return (
-            f"https://image.pollinations.ai/prompt/{encoded}"
-            f"?width={self.width}&height={self.height}&nologo=true&enhance=true"
+    def _build_url(self, query: str, seed: int | None = None) -> str:
+        """
+        Build a Pollinations.ai URL with style injection, negative prompt,
+        and an optional seed for deterministic output.
+        """
+        # Combine user query with global style guide
+        full_prompt = (
+            f"{query}, {self.visual_style}, "
+            "8K resolution, professional photography, award winning"
         )
+        encoded_prompt = quote(full_prompt)
+        encoded_negative = quote(_NEGATIVE)
 
-    def _download(self, url: str, save_path: str) -> bool:
+        url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?width={self.width}&height={self.height}"
+            f"&nologo=true&enhance=true&safe=true"
+            f"&negative={encoded_negative}"
+        )
+        if seed is not None:
+            url += f"&seed={seed}"
+        return url
+
+    def _download(self, url: str, save_path: str, attempt_label: str = "") -> bool:
         for attempt in range(self.max_retries):
             try:
                 resp = requests.get(url, timeout=self.timeout, stream=True)
                 if resp.status_code == 200 and len(resp.content) > 10_000:
                     with open(save_path, "wb") as f:
                         f.write(resp.content)
+                    print(f"  ✓ Image saved ({len(resp.content)//1024}KB) {attempt_label}")
                     return True
+                else:
+                    print(f"  ✗ Bad response {resp.status_code}, attempt {attempt+1}")
             except Exception as e:
-                print(f"Image download attempt {attempt + 1} failed: {e}")
-                time.sleep(5)
+                print(f"  ✗ Download attempt {attempt+1} failed: {e}")
+                time.sleep(5 + attempt * 3)
         return False
 
     def generate_all(self, script: dict, workspace: Path) -> list:
@@ -42,19 +71,30 @@ class ImageAgent:
 
         for i, query in enumerate(queries):
             save_path = str(workspace / f"image_{i:02d}.jpg")
-            url = self._build_url(query)
+            seed = _SEEDS[i % len(_SEEDS)]
 
-            print(f"Generating image {i+1}/{len(queries)}: {query[:60]}...")
-            success = self._download(url, save_path)
+            print(f"\n🖼  Image {i+1}/{len(queries)}: {query[:70]}...")
+
+            # Primary attempt — full quality with seed
+            url = self._build_url(query, seed=seed)
+            success = self._download(url, save_path, attempt_label=f"[scene {i+1}]")
 
             if not success:
-                # Fallback: use a simpler prompt
-                fallback_url = self._build_url(query.split(",")[0])
-                success = self._download(fallback_url, save_path)
+                # Fallback 1 — strip style modifiers, keep core subject
+                core_query = query.split(",")[0].strip()
+                print(f"  ↩ Fallback 1: simplified prompt '{core_query}'")
+                fallback_url = self._build_url(core_query, seed=seed + 1)
+                success = self._download(fallback_url, save_path, attempt_label="[fallback-1]")
+
+            if not success:
+                # Fallback 2 — random seed, minimal prompt
+                print(f"  ↩ Fallback 2: random seed")
+                fallback_url = self._build_url(core_query, seed=random.randint(1, 99999))
+                success = self._download(fallback_url, save_path, attempt_label="[fallback-2]")
 
             if success:
                 image_paths.append(save_path)
             else:
-                print(f"WARNING: Image {i} failed entirely, skipping.")
+                print(f"  ⚠ Image {i+1} failed all attempts — skipping.")
 
         return image_paths

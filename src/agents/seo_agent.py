@@ -7,9 +7,9 @@ from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
-MAX_TITLE_LEN = 100       # YouTube limit
+MAX_TITLE_LEN = 100
 MAX_DESC_LEN = 5000
-MAX_TAGS = 500            # YouTube tag character budget
+MAX_TAGS = 500
 
 
 class SEOAgent:
@@ -17,16 +17,12 @@ class SEOAgent:
         self.client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
     def generate(self, topic, script: dict, extra_description: str = "") -> dict:
-        """Public entry point called by main.py — delegates to generate_metadata."""
+        """Public entry point called by main.py."""
         return self.generate_metadata(topic, script, extra_description=extra_description)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
     def generate_metadata(self, topic, script: dict, extra_description: str = "") -> dict:
-        """
-        Generates YouTube-optimised title, description, and tags.
-        topic can be a plain string or a dict with a 'title' key.
-        """
-        # ── Normalise topic ────────────────────────────────────────────────
+        # Normalise topic
         if isinstance(topic, dict):
             topic_title = topic.get("title", str(topic))
             topic_fact = topic.get("topic", topic_title)
@@ -34,41 +30,48 @@ class SEOAgent:
             topic_title = str(topic)
             topic_fact = str(topic)
 
-        # ── Build narration summary from scenes (string or dict) ───────────
-        raw_scenes = script.get("scenes", [])
-        narration_parts = []
-        for s in raw_scenes:
-            if isinstance(s, dict):
-                narration_parts.append(s.get("narration", ""))
-            else:
-                narration_parts.append(str(s))
-        narrations = " ".join(narration_parts)
+        # Build full narration summary from all script parts
+        parts = (
+            [script.get("hook", "")]
+            + [
+                (s.get("narration", "") if isinstance(s, dict) else str(s))
+                for s in script.get("scenes", [])
+            ]
+            + [script.get("payoff", "")]
+        )
+        full_narration = " ".join(p for p in parts if p)
 
         prompt = f"""You are a YouTube SEO expert specialised in viral Shorts.
 
 Video topic: {topic_title}
 Core fact: {topic_fact}
-Script summary: {narrations[:600]}
+Full script: {full_narration[:800]}
 
-Generate YouTube metadata. Rules:
-- Title: < 100 chars, emotionally compelling, includes a hook number or power word
-- Description: 150-250 words. Start with the hook. Include the full fact. Add 3 related questions people might search. End with CTA to subscribe.
-- Tags: 20-30 tags, mix of broad and specific. Include "Shorts" and "#Shorts".
-- Hashtags line: top 5 hashtags to append at end of description.
+Generate YouTube metadata. Strict rules:
+- Title: under 100 chars. Emotionally charged. Include a specific number or shocking claim. No clickbait that doesn't deliver.
+- Description: 200–300 words. Open with the hook verbatim. Expand the key facts with one extra detail each. Add 4 related search questions people might type. Close with a subscribe CTA. Write in second person ("you").
+- Tags: 25–35 tags. Mix single words, 2-word phrases, and 3-word phrases. Always include "Shorts", "shorts", "space facts", "did you know", "mind blowing facts", "science facts".
+- Hashtags: top 6 hashtags ranked by likely reach. Always include #Shorts and #SpaceFacts.
 
-Respond ONLY with valid JSON, no markdown:
+Respond ONLY with valid JSON, no markdown fences:
 {{
   "title": "...",
   "description": "...",
   "tags": ["tag1", "tag2", ...],
-  "hashtags": ["#Shorts", "#facts", ...]
+  "hashtags": ["#Shorts", "#SpaceFacts", ...]
 }}"""
 
         response = self.client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=1200,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You output only valid JSON. No markdown, no preamble, no explanation."
+                },
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.65,
+            max_tokens=1400,
         )
 
         text = response.choices[0].message.content.strip()
@@ -80,11 +83,12 @@ Respond ONLY with valid JSON, no markdown:
             match = re.search(r"\{.*\}", text, re.DOTALL)
             meta = json.loads(match.group()) if match else {}
 
-        # ── Sanitise and enforce limits ────────────────────────────────────
+        # Sanitise and enforce limits
         title = meta.get("title", topic_title)[:MAX_TITLE_LEN]
 
         tags = meta.get("tags", [])
-        must_have = ["Shorts", "shorts", "facts", "didyouknow", "amazingfacts", "viral"]
+        must_have = ["Shorts", "shorts", "space facts", "facts", "did you know",
+                     "science", "amazingfacts", "viral", "educational"]
         for t in must_have:
             if t not in tags:
                 tags.insert(0, t)
@@ -95,7 +99,7 @@ Respond ONLY with valid JSON, no markdown:
                 final_tags.append(t)
                 tag_budget += len(t) + 1
 
-        hashtags = meta.get("hashtags", ["#Shorts", "#Facts", "#DidYouKnow"])
+        hashtags = meta.get("hashtags", ["#Shorts", "#SpaceFacts", "#DidYouKnow"])
         hashtag_line = " ".join(hashtags[:8])
 
         description = meta.get("description", topic_fact)
@@ -108,7 +112,7 @@ Respond ONLY with valid JSON, no markdown:
             "title": title,
             "description": description,
             "tags": final_tags,
-            "category_id": "27",       # Education
+            "category_id": "27",        # Education
             "default_language": "en",
         }
 
