@@ -65,71 +65,79 @@ class VideoAgent:
     def _wrap_text(self, text: str, max_chars: int = 26) -> str:
         return "\n".join(textwrap.wrap(text, width=max_chars))
 
-    def _escape_drawtext(self, text: str) -> str:
-        wrapped = self._wrap_text(text, max_chars=26)
-        lines = wrapped.split("\n")
-        escaped = []
-        for line in lines:
-            line = line.replace("\\", "\\\\")
-            line = line.replace("'", "\\'")
-            line = line.replace(":", "\\:")
-            escaped.append(line)
-        return "\\n".join(escaped)
-
     def _add_caption(self, video_path: str, text: str, out_path: str):
+        """
+        Renders captions using `textfile=` instead of `text=` so that
+        apostrophes, colons, slashes, and other special characters in the
+        narration text never corrupt the ffmpeg filtergraph expression.
+        A temporary .txt file is written for each clip and cleaned up after.
+        """
         if not text.strip():
             result = subprocess.run(
                 ["ffmpeg", "-y", "-i", video_path, *_ENCODE_FLAGS, out_path],
-                capture_output=True
+                capture_output=True,
             )
             if result.returncode != 0:
-                raise RuntimeError(f"Caption passthrough failed:\n{result.stderr.decode()}")
+                raise RuntimeError(
+                    f"Caption passthrough failed:\n{result.stderr.decode()}"
+                )
             return
 
-        escaped = self._escape_drawtext(text)
+        # Write wrapped text to a temp file — bypasses ALL escaping issues
+        import tempfile, os
+        wrapped = self._wrap_text(text, max_chars=26)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(wrapped)
+            txt_path = tf.name
+
         font_size = self.font_size
 
-        # Two drawtext layers: shadow offset + main text (simulates drop shadow)
-        shadow = (
-            f"drawtext="
-            f"text='{escaped}':"
-            f"fontsize={font_size}:"
-            f"fontcolor=black@0.85:"
-            f"font='DejaVu-Sans-Bold':"
-            f"x=(w-text_w)/2+3:"
-            f"y={_CAPTION_Y}+3:"
-            f"line_spacing=12:"
-            f"fix_bounds=true"
-        )
-        main = (
-            f"drawtext="
-            f"text='{escaped}':"
-            f"fontsize={font_size}:"
-            f"fontcolor=white:"
-            f"font='DejaVu-Sans-Bold':"
-            f"bordercolor=black:"
-            f"borderw=2:"
-            f"box=1:"
-            f"boxcolor=black@0.45:"
-            f"boxborderw=20:"
-            f"x=(w-text_w)/2:"
-            f"y={_CAPTION_Y}:"
-            f"line_spacing=12:"
-            f"fix_bounds=true"
-        )
+        try:
+            # Two drawtext passes: shadow layer then main layer
+            shadow = (
+                f"drawtext="
+                f"textfile='{txt_path}':"
+                f"fontsize={font_size}:"
+                f"fontcolor=black@0.85:"
+                f"font=DejaVu-Sans-Bold:"
+                f"x=(w-text_w)/2+3:"
+                f"y={_CAPTION_Y}+3:"
+                f"line_spacing=12:"
+                f"fix_bounds=true"
+            )
+            main = (
+                f"drawtext="
+                f"textfile='{txt_path}':"
+                f"fontsize={font_size}:"
+                f"fontcolor=white:"
+                f"font=DejaVu-Sans-Bold:"
+                f"bordercolor=black:"
+                f"borderw=2:"
+                f"box=1:"
+                f"boxcolor=black@0.45:"
+                f"boxborderw=20:"
+                f"x=(w-text_w)/2:"
+                f"y={_CAPTION_Y}:"
+                f"line_spacing=12:"
+                f"fix_bounds=true"
+            )
 
-        vf = f"{shadow},{main}"
+            vf = f"{shadow},{main}"
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-vf", vf,
-            *_ENCODE_FLAGS,
-            out_path
-        ]
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Caption failed:\n{result.stderr.decode()}")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-vf", vf,
+                *_ENCODE_FLAGS,
+                out_path,
+            ]
+            result = subprocess.run(cmd, capture_output=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"Caption failed:\n{result.stderr.decode()}")
+        finally:
+            os.unlink(txt_path)
 
     # ------------------------------------------------------------------
     # Main assembly
