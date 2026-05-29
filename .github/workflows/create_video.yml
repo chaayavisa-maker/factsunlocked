@@ -93,14 +93,32 @@ jobs:
             echo "4. Click **Run workflow** — already-completed steps will be skipped."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ── Restore topic history (persists across ALL daily runs) ───────────
+      # Key never changes — always restore the latest save.
+      - name: Restore topic history cache
+        id: topic_history_restore
+        uses: actions/cache/restore@v4
+        with:
+          path: used_topics.json
+          key: topic-history-always-latest
+          restore-keys: |
+            topic-history-
+
+      - name: Report topic history status
+        run: |
+          if [ -f used_topics.json ]; then
+            COUNT=$(python3 -c "import json; d=json.load(open('used_topics.json')); print(len(d))")
+            echo "✅ Topic history loaded — $COUNT topics on record."
+          else
+            echo "ℹ️  No topic history found — starting fresh (expected on first run)."
+          fi
+
       # ── Restore workspace from a previous run (cache miss = fresh start) ─
       - name: Restore workspace cache
         id: cache_restore
         uses: actions/cache/restore@v4
         with:
           path: workspace/
-          # Exact key includes run_number so each attempt can save its own entry.
-          # restore-keys prefix-matches the most recent save for this run_id.
           key: pipeline-${{ steps.resolve_run_id.outputs.value }}-${{ github.run_number }}
           restore-keys: |
             pipeline-${{ steps.resolve_run_id.outputs.value }}-
@@ -141,6 +159,16 @@ jobs:
           DRY_RUN:               ${{ github.event.inputs.dry_run || 'false' }}
           PYTHONPATH:            ${{ github.workspace }}/src
         run: python src/main.py
+
+      # ── Always save topic history so next run benefits from it ───────────
+      # Save with a timestamped key so GitHub keeps it, but restore-keys
+      # prefix "topic-history-" always finds the latest one.
+      - name: Save topic history cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: used_topics.json
+          key: topic-history-${{ github.run_number }}
 
       # ── Always save workspace so failed runs can be resumed ──────────────
       - name: Save workspace cache
