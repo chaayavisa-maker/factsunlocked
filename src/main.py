@@ -220,7 +220,7 @@ async def run_pipeline():
                 video_path=video_path,
                 title=metadata["title"],
             )
-            logger.info("✅ TikTok publish_id: %s", publish_id)
+                logger.info("✅ TikTok publish_id: %s", publish_id)
             except Exception as exc:
                 logger.error("❌ TikTok upload failed: %s", exc)
         state.mark_done(STEP, video_id)
