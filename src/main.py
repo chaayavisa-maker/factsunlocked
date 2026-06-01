@@ -14,7 +14,9 @@ from agents.music_agent import MusicAgent, MUSIC_CREDIT
 from agents.video_agent import VideoAgent
 from agents.seo_agent import SEOAgent
 from platforms.youtube import YouTubePublisher
+from platforms.tiktok import upload_to_tiktok
 from utils.logger import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -212,6 +214,15 @@ async def run_pipeline():
             publisher = YouTubePublisher()
             video_id = publisher.upload(Path(video_path), metadata)
             logger.info(f"  ✓ [{STEP}] https://youtube.com/shorts/{video_id}")
+            # TikTok — post the same video
+            try:
+                publish_id = upload_to_tiktok(
+                video_path=video_path,
+                title=metadata["title"],
+            )
+            log.info("✅ TikTok publish_id: %s", publish_id)
+            except Exception as exc:
+                log.error("❌ TikTok upload failed: %s", exc)
         state.mark_done(STEP, video_id)
 
     logger.info("=" * 60)
