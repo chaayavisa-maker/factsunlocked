@@ -36,6 +36,7 @@ def upload_video(
     category_id: str = "28",
     privacy: str = "public",
     made_for_kids: bool = False,
+    thumbnail_path: str = None,
     playlist_id: str = None,
     # Env-var names (different per channel)
     client_id_env: str = "YOUTUBE_CLIENT_ID",
@@ -86,6 +87,23 @@ def upload_video(
 
     video_id = response["id"]
     logger.info(f"Uploaded: https://youtube.com/shorts/{video_id}")
+
+    video_id = response["id"]
+    logger.info(f"Uploaded: https://youtube.com/shorts/{video_id}")
+
+    # Upload thumbnail if provided
+    if thumbnail_path and Path(thumbnail_path).exists():
+        from googleapiclient.http import MediaFileUpload as _MFU
+        logger.info("Uploading thumbnail…")
+        youtube.thumbnails().set(
+            videoId=video_id,
+            media_body=_MFU(thumbnail_path, mimetype="image/png", resumable=True),
+        ).execute()
+        logger.info("Thumbnail set.")
+
+    # Add to playlist if provided
+    if playlist_id:
+        add_to_playlist(youtube, video_id, playlist_id)
 
     # Add to playlist if provided
     if playlist_id:
