@@ -54,8 +54,8 @@ def build_video(
 
         img_clip = (
             ImageClip(str(img_path))
-            .set_duration(duration)
-            .resize(resolution)
+            .with_duration(duration)        # v1: .set_duration()
+            .resized(resolution)            # v1: .resize()
         )
 
         layers = [img_clip]
@@ -65,8 +65,8 @@ def build_video(
         if narration:
             txt = (
                 TextClip(
-                    narration,
-                    fontsize=font_size,
+                    text=narration,         # v1: positional arg
+                    font_size=font_size,    # v1: fontsize=
                     color="white",
                     stroke_color="black",
                     stroke_width=2,
@@ -74,8 +74,8 @@ def build_video(
                     size=(w - 80, None),
                     font="Arial-Bold",
                 )
-                .set_position(("center", h * 0.75))
-                .set_duration(duration)
+                .with_position(("center", h * 0.75))   # v1: .set_position()
+                .with_duration(duration)                # v1: .set_duration()
             )
             layers.append(txt)
 
@@ -83,15 +83,15 @@ def build_video(
         if watermark:
             wm = (
                 TextClip(
-                    watermark,
-                    fontsize=36,
+                    text=watermark,
+                    font_size=36,           # v1: fontsize=
                     color="white",
                     stroke_color="black",
                     stroke_width=1,
                     font="Arial",
                 )
-                .set_position((w - 250, h - 80))
-                .set_duration(duration)
+                .with_position((w - 250, h - 80))   # v1: .set_position()
+                .with_duration(duration)             # v1: .set_duration()
             )
             layers.append(wm)
 
@@ -99,8 +99,8 @@ def build_video(
         if i == 0 and hook_text:
             hook = (
                 TextClip(
-                    hook_text,
-                    fontsize=int(font_size * 0.8),
+                    text=hook_text,
+                    font_size=int(font_size * 0.8),  # v1: fontsize=
                     color="yellow",
                     stroke_color="black",
                     stroke_width=2,
@@ -108,12 +108,12 @@ def build_video(
                     size=(w - 80, None),
                     font="Arial-Bold",
                 )
-                .set_position(("center", h * 0.1))
-                .set_duration(min(3, duration))
+                .with_position(("center", h * 0.1))        # v1: .set_position()
+                .with_duration(min(3, duration))            # v1: .set_duration()
             )
             layers.append(hook)
 
-        scene_clip = CompositeVideoClip(layers).set_audio(audio)
+        scene_clip = CompositeVideoClip(layers).with_audio(audio)  # v1: .set_audio()
         clips.append(scene_clip)
 
     logger.info(f"Concatenating {len(clips)} scenes…")
