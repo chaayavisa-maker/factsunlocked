@@ -1,185 +1,158 @@
-# 🎬 FactsUnlocked — Autonomous YouTube Shorts Business
+# 🎬 FactsUnlocked + 🔮 AstroFacts — Autonomous YouTube & TikTok Video Business
 
-> A fully automated pipeline that researches trending topics, writes scripts, generates images and narration, assembles polished vertical videos, and publishes them to YouTube — every single day — without you touching anything after setup.
+> Two fully automated pipelines that research topics / generate horoscopes, write scripts,
+> produce vertical videos, and publish to YouTube and TikTok — **every single day** — without
+> touching anything after setup.
 
 ---
 
-## 💰 How It Makes Money
+## 📦 Channels
 
-| Phase | Requirement | Timeline |
-|---|---|---|
-| **YouTube Partner Program** (Shorts) | 500 subs + 3,000 watch hours | 2–4 months |
-| **Full AdSense** | 1,000 subs + 4,000 watch hours | 4–8 months |
-| **Affiliate links** (Amazon, ClickBank) | Added to every description from day 1 | Immediate |
-| **Sponsorships** | ~10K subs | 6–12 months |
+| Channel | Niche | Platforms | Frequency | Groq Key |
+|---|---|---|---|---|
+| **FactsUnlocked** | Amazing Facts | YouTube Shorts | 1 video/day | `GROQ_API_KEY` |
+| **AstroFacts** | Horoscopes | YouTube Shorts + TikTok | 12 daily + weekly + monthly + yearly | `GROQ_API_KEY_ASTRO` |
 
-Estimated at scale: **$3–$15 CPM** for an "Amazing Facts" audience. At 100K views/month → **$300–$1,500/month passively**.
+AstroFacts publishes **one video per zodiac sign** per period — 12 daily, 12 weekly, 12 monthly, and 12 on Jan 1st.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-GitHub Actions (daily cron 09:00 UTC)
+GitHub Actions (scheduled crons)
         │
-        ▼
-  TopicAgent          ← Groq LLaMA 3.1 70B (free) + pytrends
+        ├── factsunlocked_daily.yml  ──▶  src/main.py
+        │                                  └── TopicAgent (GROQ_API_KEY)
+        │                                  └── ScriptAgent
+        │                                  └── ImageAgent (Pollinations)
+        │                                  └── NarrationAgent (edge-tts)
+        │                                  └── VideoAgent (moviepy)
+        │                                  └── YouTubePublisher
         │
-  ScriptAgent         ← Groq LLaMA 3.1 70B (free)
-        │
-  ┌─────┴──────┐
-  │            │
-ImageAgent  NarrationAgent
-Pollinations  edge-tts
-(free)        (free)
-  │            │
-  └─────┬──────┘
-        │
-  VideoAgent          ← moviepy + ffmpeg (open source)
-        │
-  SEOAgent            ← Groq LLaMA 3.1 70B (free)
-        │
-  YouTubePublisher    ← YouTube Data API v3 (free quota)
-        │
-  youtube.com/shorts/VIDEO_ID  💸
+        └── astrofacts_daily.yml     ──▶  src/astrofacts_main.py --period daily
+            astrofacts_weekly.yml         └── HoroscopeScriptAgent (GROQ_API_KEY_ASTRO)
+            astrofacts_monthly.yml        └── ImageAgent (Pollinations)
+            astrofacts_yearly.yml         └── NarrationAgent (edge-tts)
+                                          └── VideoAgent (moviepy)
+                                          └── YouTubePublisher (_ASTRO credentials)
+                                          └── TikTokPublisher (_ASTRO credentials)
 ```
 
 **Total running cost: $0/month** (all free tiers)
 
 ---
 
-## 🚀 Quick Start (15 minutes)
+## 🚀 Setup
 
-### 1. Fork & Clone
+### 1. Clone & install
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/factsunlocked.git
 cd factsunlocked
+chmod +x setup.sh && ./setup.sh
 ```
 
-### 2. Run Setup Script
+### 2. Get Groq API Keys (two accounts = two keys = no rate-limit sharing)
+
+| Key | Used by | Get at |
+|---|---|---|
+| `GROQ_API_KEY` | FactsUnlocked | https://console.groq.com |
+| `GROQ_API_KEY_ASTRO` | AstroFacts | https://console.groq.com (second account or key) |
+
+### 3. Set up YouTube for FactsUnlocked (original channel)
 
 ```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-### 3. Get Your Free Groq API Key
-
-1. Go to **https://console.groq.com**
-2. Sign up (free — no credit card)
-3. Create an API key
-4. Copy it
-
-### 4. Set Up YouTube OAuth (one-time, ~5 minutes)
-
-**A. Create Google Cloud project:**
-1. Go to https://console.cloud.google.com/
-2. Create a new project (e.g. "FactsUnlocked")
-3. Navigate to **APIs & Services → Library**
-4. Search and enable **YouTube Data API v3**
-5. Go to **APIs & Services → Credentials**
-6. Click **Create Credentials → OAuth 2.0 Client ID**
-7. Application type: **Desktop app**
-8. Download the JSON → save as `client_secrets.json` in the project root
-
-**B. Authorise and get your refresh token:**
-```bash
-source .env
 python scripts/get_youtube_token.py
 ```
-The script opens your browser, you click Allow, and it prints three values.
 
-### 5. Add GitHub Actions Secrets
+Add secrets: `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN`
 
-Go to your repo → **Settings → Secrets and variables → Actions → New repository secret**
+### 4. Set up YouTube for AstroFacts (new channel)
 
-| Secret Name | Where to get it |
+1. Create a **separate Google Cloud project** for AstroFacts
+2. Enable YouTube Data API v3, create OAuth credentials → save as `client_secrets_astro.json`
+3. Run:
+
+```bash
+python scripts/get_astro_youtube_token.py
+```
+
+Add secrets: `YOUTUBE_CLIENT_ID_ASTRO`, `YOUTUBE_CLIENT_SECRET_ASTRO`, `YOUTUBE_REFRESH_TOKEN_ASTRO`
+
+4. Create 4 YouTube playlists on the AstroFacts channel (Daily / Weekly / Monthly / Yearly)
+5. Paste their IDs into `config/settings.yaml` under `astrofacts.platforms.youtube.playlist_ids`
+
+### 5. Set up TikTok for AstroFacts
+
+1. Apply at https://developers.tiktok.com → create app → enable **Content Posting API**
+2. Set redirect URI: `http://localhost:8080/callback`
+3. Set env vars locally, then run:
+
+```bash
+TIKTOK_CLIENT_KEY_ASTRO=xxx TIKTOK_CLIENT_SECRET_ASTRO=yyy python scripts/get_tiktok_token.py
+```
+
+Add secrets: `TIKTOK_CLIENT_KEY_ASTRO`, `TIKTOK_CLIENT_SECRET_ASTRO`, `TIKTOK_REFRESH_TOKEN_ASTRO`
+
+### 6. Add all GitHub Actions Secrets
+
+Go to repo → **Settings → Secrets and variables → Actions**
+
+| Secret | Channel |
 |---|---|
-| `GROQ_API_KEY` | https://console.groq.com |
-| `YOUTUBE_CLIENT_ID` | Printed by `get_youtube_token.py` |
-| `YOUTUBE_CLIENT_SECRET` | Printed by `get_youtube_token.py` |
-| `YOUTUBE_REFRESH_TOKEN` | Printed by `get_youtube_token.py` |
+| `GROQ_API_KEY` | FactsUnlocked |
+| `YOUTUBE_CLIENT_ID` | FactsUnlocked |
+| `YOUTUBE_CLIENT_SECRET` | FactsUnlocked |
+| `YOUTUBE_REFRESH_TOKEN` | FactsUnlocked |
+| `GROQ_API_KEY_ASTRO` | AstroFacts |
+| `YOUTUBE_CLIENT_ID_ASTRO` | AstroFacts |
+| `YOUTUBE_CLIENT_SECRET_ASTRO` | AstroFacts |
+| `YOUTUBE_REFRESH_TOKEN_ASTRO` | AstroFacts |
+| `TIKTOK_CLIENT_KEY_ASTRO` | AstroFacts |
+| `TIKTOK_CLIENT_SECRET_ASTRO` | AstroFacts |
+| `TIKTOK_REFRESH_TOKEN_ASTRO` | AstroFacts |
 
-### 6. Enable GitHub Actions
+### 7. Enable GitHub Actions
 
-1. Go to your repo → **Actions** tab
-2. Click **"I understand my workflows, go ahead and enable them"**
-3. Done ✅
+Repo → **Actions** tab → enable workflows ✅
 
-The pipeline now runs automatically every day at 09:00 UTC.
+---
+
+## 📅 Posting Schedule
+
+| Workflow | Cron | Content |
+|---|---|---|
+| `factsunlocked_daily.yml` | `0 9 * * *` | 1 facts video |
+| `astrofacts_daily.yml` | `0 6 * * *` | 12 daily horoscopes |
+| `astrofacts_weekly.yml` | `0 7 * * 1` | 12 weekly horoscopes (Monday) |
+| `astrofacts_monthly.yml` | `0 8 1 * *` | 12 monthly horoscopes (1st of month) |
+| `astrofacts_yearly.yml` | `0 8 1 1 *` | 12 yearly horoscopes (Jan 1st) |
+
+> **YouTube quota note:** Uploading = 1,600 units. Free quota = 10,000/day → max 6 uploads/day.
+> AstroFacts uses a **separate Google Cloud project** so its quota is independent.
 
 ---
 
 ## 🧪 Test Locally
 
 ```bash
-# Load env vars
-source .env
+export PYTHONPATH=$(pwd)
 
-# Set Python path
-export PYTHONPATH=$(pwd)/src
-
-# Run the full pipeline
+# Test FactsUnlocked
 python src/main.py
+
+# Test AstroFacts daily (all signs)
+python src/astrofacts_main.py --period daily
+
+# Test a single sign
+python src/astrofacts_main.py --period daily --sign Aries
+
+# Test other periods
+python src/astrofacts_main.py --period weekly
+python src/astrofacts_main.py --period monthly
+python src/astrofacts_main.py --period yearly
 ```
-
-You'll see step-by-step logs. The final video is saved to `workspace/<run_id>/final_video.mp4`.
-
----
-
-## ⚙️ Configuration
-
-Edit `config/settings.yaml` to customise:
-
-```yaml
-channel:
-  niche: "amazing facts"      # Change to any niche
-  language: "en-US"
-
-video:
-  scenes_count: 6             # Number of scenes (×~10s = video length)
-  font_size: 72               # On-screen text size
-
-tts:
-  voice: "en-US-AriaNeural"  # TTS voice (see edge-tts docs for options)
-```
-
-### Available TTS Voices (free)
-
-| Voice | Style |
-|---|---|
-| `en-US-AriaNeural` | Warm, natural female (default) |
-| `en-US-GuyNeural` | Confident male |
-| `en-GB-SoniaNeural` | British female — sounds authoritative |
-| `en-AU-NatashaNeural` | Australian female |
-
----
-
-## 📅 Posting Schedule
-
-The cron in `.github/workflows/create_video.yml` defaults to **09:00 UTC daily**.
-
-Change it by editing the cron expression:
-```yaml
-- cron: "0 9 * * *"     # Every day at 09:00 UTC
-- cron: "0 9 * * 1-5"   # Weekdays only
-- cron: "0 9,17 * * *"  # Twice daily (watch your YouTube quota!)
-```
-
-> **YouTube quota note:** Uploading costs 1,600 units. Free quota = 10,000/day → max **6 uploads/day**.
-
----
-
-## 🛠️ Troubleshooting
-
-| Problem | Fix |
-|---|---|
-| `GROQ_API_KEY` missing | Add secret in GitHub → Settings → Secrets |
-| YouTube upload fails 403 | Re-run `get_youtube_token.py` to refresh credentials |
-| Images too slow | Pollinations.ai can be slow — the 90s timeout handles it |
-| Video has no audio | Check ffmpeg is installed: `ffmpeg -version` |
-| Pipeline times out | Increase `timeout-minutes` in the workflow file |
 
 ---
 
@@ -187,43 +160,55 @@ Change it by editing the cron expression:
 
 ```
 .
-├── .github/
-│   └── workflows/
-│       └── create_video.yml      # Daily GitHub Actions workflow
+├── .github/workflows/
+│   ├── factsunlocked_daily.yml     # FactsUnlocked: 1 video/day
+│   ├── astrofacts_daily.yml        # AstroFacts: 12 daily horoscopes
+│   ├── astrofacts_weekly.yml       # AstroFacts: 12 weekly horoscopes
+│   ├── astrofacts_monthly.yml      # AstroFacts: 12 monthly horoscopes
+│   └── astrofacts_yearly.yml       # AstroFacts: 12 yearly horoscopes
 ├── src/
-│   ├── main.py                   # Pipeline orchestrator
+│   ├── main.py                     # FactsUnlocked pipeline
+│   ├── astrofacts_main.py          # AstroFacts pipeline (all signs × period)
 │   ├── agents/
-│   │   ├── topic_agent.py        # Groq + pytrends topic research
-│   │   ├── script_agent.py       # Groq script writer
-│   │   ├── image_agent.py        # Pollinations.ai image gen
-│   │   ├── narration_agent.py    # edge-tts TTS
-│   │   ├── video_agent.py        # moviepy video assembly
-│   │   └── seo_agent.py          # Groq SEO optimiser
+│   │   ├── horoscope_script_agent.py  # Zodiac-aware script + SEO generator
+│   │   ├── image_agent.py             # Pollinations.ai image generation
+│   │   ├── narration_agent.py         # edge-tts TTS
+│   │   └── video_agent.py             # moviepy video assembly
 │   ├── platforms/
-│   │   └── youtube.py            # YouTube Data API v3 uploader
+│   │   ├── youtube.py              # YouTube uploader (supports playlists)
+│   │   └── tiktok.py               # TikTok Content Posting API uploader
 │   └── utils/
+│       ├── groq_client.py          # Groq REST wrapper (picks key by env var)
 │       └── logger.py
 ├── config/
-│   └── settings.yaml             # All tunable settings
+│   ├── settings.yaml               # All settings for both channels
+│   └── zodiac.py                   # Zodiac sign data (names, symbols, colours)
 ├── scripts/
-│   └── get_youtube_token.py      # One-time OAuth setup
+│   ├── get_youtube_token.py        # OAuth for FactsUnlocked YouTube
+│   ├── get_astro_youtube_token.py  # OAuth for AstroFacts YouTube
+│   └── get_tiktok_token.py         # OAuth for AstroFacts TikTok
 ├── requirements.txt
-├── setup.sh
-└── README.md
+└── setup.sh
 ```
 
 ---
 
-## 📈 Growth Tips
+## ⚙️ Configuration
 
-1. **Pick a sub-niche** — "Space facts", "History secrets", or "Body facts" outperform generic "Amazing facts"
-2. **Consistency beats quality** — daily posting matters more than perfect videos early on
-3. **Add affiliate links** from day 1 — Amazon Associates pays for clicks, not just sales
-4. **Engage in comments** — even 10 min/week of replies accelerates growth
-5. **Cross-post to TikTok manually** at first — 1080×1920 format is already optimised
+Edit `config/settings.yaml` to customise voices, video settings, and toggle platforms:
+
+```yaml
+astrofacts:
+  platforms:
+    tiktok:
+      enabled: true   # set false to disable TikTok
+    youtube:
+      playlist_ids:
+        daily: "PLxxx"   # paste your playlist IDs here
+```
 
 ---
 
 ## 📜 License
 
-MIT — do whatever you want with this code.
+MIT

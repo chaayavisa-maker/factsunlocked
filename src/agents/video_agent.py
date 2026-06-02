@@ -1,271 +1,133 @@
-import os
-import subprocess
-import textwrap
+"""
+VideoAgent – assembles scenes (image + audio) into a vertical MP4.
+Works for both channels; pass channel config to customise watermark/font.
+"""
+
 from pathlib import Path
+from src.utils.logger import get_logger
 
-# Shared encoder settings — every intermediate clip must use these so that
-# the final concat step can stream-copy without re-encoding.
-_ENCODE_FLAGS = ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p"]
-
-# Minimum scene duration guard — never show an image for less than 2 seconds
-_MIN_SCENE_DURATION = 2.0
-
-# Caption position — bottom-third (Shorts standard)
-_CAPTION_Y = "(h*0.72)"
+logger = get_logger(__name__)
 
 
-class VideoAgent:
-    def __init__(self, settings: dict):
-        self.w = 1080
-        self.h = 1920
-        self.fps = settings["video"].get("fps", 30)
-        self.font_size = settings["video"].get("font_size", 68)
-        self.music_volume = settings["video"].get("music_volume", 0.12)
+def build_video(
+    scenes: list,
+    image_paths: list,
+    audio_paths: list,
+    output_path: Path,
+    resolution: tuple = (1080, 1920),
+    fps: int = 30,
+    font_size: int = 72,
+    watermark: str = None,
+    hook_text: str = None,
+) -> Path:
+    """
+    Build final video from per-scene images + audio.
 
-    # ------------------------------------------------------------------
-    # Ken Burns effect via ffmpeg zoompan (fast, no per-frame Python)
-    # ------------------------------------------------------------------
-    def _ken_burns(self, img_path: str, out_path: str, duration: float, zoom_in: bool = True):
-        duration = max(duration, _MIN_SCENE_DURATION)
-        frames = int(duration * self.fps)
+    Parameters
+    ----------
+    scenes       : list of scene dicts (with 'narration' key for subtitles)
+    image_paths  : list of Path objects for scene images
+    audio_paths  : list of Path objects for scene audio
+    output_path  : where to save the final MP4
+    watermark    : optional bottom-right text overlay (e.g. "AstroFacts ✨")
+    hook_text    : optional opening text overlay (first 2s)
+    """
+    try:
+        from moviepy.editor import (
+            ImageClip,
+            AudioFileClip,
+            TextClip,
+            CompositeVideoClip,
+            concatenate_videoclips,
+        )
+    except ImportError:
+        raise ImportError("moviepy is not installed. Run: pip install moviepy")
 
-        if zoom_in:
-            zoom_expr = "min(zoom+0.0004,1.12)"
-        else:
-            zoom_expr = "if(eq(on,1),1.12,max(zoom-0.0004,1.0))"
+    clips = []
+    w, h = resolution
 
-        vf = (
-            f"scale={self.w*2}:{self.h*2},"   # upscale first → cleaner zoompan
-            f"zoompan="
-            f"z='{zoom_expr}':"
-            f"d={frames}:"
-            f"x='iw/2-(iw/zoom/2)':"
-            f"y='ih/2-(ih/zoom/2)':"
-            f"s={self.w}x{self.h},"
-            f"fps={self.fps},"
-            f"setpts=PTS-STARTPTS"
+    for i, (scene, img_path, aud_path) in enumerate(
+        zip(scenes, image_paths, audio_paths)
+    ):
+        audio = AudioFileClip(str(aud_path))
+        duration = audio.duration
+
+        img_clip = (
+            ImageClip(str(img_path))
+            .set_duration(duration)
+            .resize(resolution)
         )
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", img_path,
-            "-vf", vf,
-            "-t", str(duration),
-            *_ENCODE_FLAGS,
-            out_path
-        ]
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Ken Burns failed:\n{result.stderr.decode()}")
+        layers = [img_clip]
 
-    # ------------------------------------------------------------------
-    # Caption overlay — bottom-third, word-wrapped, drop-shadow style
-    # ------------------------------------------------------------------
-    def _wrap_text(self, text: str, max_chars: int = 26) -> str:
-        return "\n".join(textwrap.wrap(text, width=max_chars))
-
-    def _add_caption(self, video_path: str, text: str, out_path: str):
-        """
-        Renders captions using `textfile=` instead of `text=` so that
-        apostrophes, colons, slashes, and other special characters in the
-        narration text never corrupt the ffmpeg filtergraph expression.
-        A temporary .txt file is written for each clip and cleaned up after.
-        """
-        if not text.strip():
-            result = subprocess.run(
-                ["ffmpeg", "-y", "-i", video_path, *_ENCODE_FLAGS, out_path],
-                capture_output=True,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"Caption passthrough failed:\n{result.stderr.decode()}"
+        # Subtitle / narration overlay
+        narration = scene.get("narration", "")
+        if narration:
+            txt = (
+                TextClip(
+                    narration,
+                    fontsize=font_size,
+                    color="white",
+                    stroke_color="black",
+                    stroke_width=2,
+                    method="caption",
+                    size=(w - 80, None),
+                    font="Arial-Bold",
                 )
-            return
-
-        # Write wrapped text to a temp file — bypasses ALL escaping issues
-        import tempfile, os
-        wrapped = self._wrap_text(text, max_chars=26)
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
-        ) as tf:
-            tf.write(wrapped)
-            txt_path = tf.name
-
-        font_size = self.font_size
-
-        try:
-            # Two drawtext passes: shadow layer then main layer
-            shadow = (
-                f"drawtext="
-                f"textfile='{txt_path}':"
-                f"fontsize={font_size}:"
-                f"fontcolor=black@0.85:"
-                f"font=DejaVu-Sans-Bold:"
-                f"x=(w-text_w)/2+3:"
-                f"y={_CAPTION_Y}+3:"
-                f"line_spacing=12:"
-                f"fix_bounds=true"
+                .set_position(("center", h * 0.75))
+                .set_duration(duration)
             )
-            main = (
-                f"drawtext="
-                f"textfile='{txt_path}':"
-                f"fontsize={font_size}:"
-                f"fontcolor=white:"
-                f"font=DejaVu-Sans-Bold:"
-                f"bordercolor=black:"
-                f"borderw=2:"
-                f"box=1:"
-                f"boxcolor=black@0.45:"
-                f"boxborderw=20:"
-                f"x=(w-text_w)/2:"
-                f"y={_CAPTION_Y}:"
-                f"line_spacing=12:"
-                f"fix_bounds=true"
-            )
+            layers.append(txt)
 
-            vf = f"{shadow},{main}"
-
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-vf", vf,
-                *_ENCODE_FLAGS,
-                out_path,
-            ]
-            result = subprocess.run(cmd, capture_output=True)
-            if result.returncode != 0:
-                raise RuntimeError(f"Caption failed:\n{result.stderr.decode()}")
-        finally:
-            os.unlink(txt_path)
-
-    # ------------------------------------------------------------------
-    # Main assembly
-    # ------------------------------------------------------------------
-    def assemble(
-        self,
-        workspace: str,
-        image_paths: list,
-        narration_path: str,
-        music_path: str | None,
-        script: dict,
-        scene_durations: list[float] | None = None,
-    ) -> str:
-        ws = Path(workspace)
-
-        # Build scene text list: hook → body scenes → payoff
-        scene_texts = (
-            [script.get("hook", "")]
-            + [
-                (s.get("narration", "") if isinstance(s, dict) else str(s))
-                for s in script.get("scenes", [])
-            ]
-            + [script.get("payoff", "")]
-        )
-
-        n = len(image_paths)
-        scene_texts = scene_texts[:n]
-        while len(scene_texts) < n:
-            scene_texts.append("")
-
-        # ── Scene durations ──────────────────────────────────────────────
-        if scene_durations and len(scene_durations) >= n:
-            # Use per-clip durations from narration agent (accurate)
-            durations = [max(d, _MIN_SCENE_DURATION) for d in scene_durations[:n]]
-            print(f"Using per-scene durations: {[f'{d:.1f}s' for d in durations]}")
-        else:
-            # Fallback: measure total narration and split evenly
-            try:
-                result = subprocess.run(
-                    [
-                        "ffprobe", "-v", "error",
-                        "-show_entries", "format=duration",
-                        "-of", "default=noprint_wrappers=1:nokey=1",
-                        narration_path,
-                    ],
-                    capture_output=True, text=True, check=True,
+        # Watermark
+        if watermark:
+            wm = (
+                TextClip(
+                    watermark,
+                    fontsize=36,
+                    color="white",
+                    stroke_color="black",
+                    stroke_width=1,
+                    font="Arial",
                 )
-                total_duration = float(result.stdout.strip())
-            except Exception:
-                total_duration = n * 10.0
-            even = max(total_duration / n, _MIN_SCENE_DURATION)
-            durations = [even] * n
-            print(f"Even split: {even:.1f}s × {n} scenes")
-
-        # 1. Ken Burns + caption for each scene
-        scene_paths = []
-        for i, (img_path, text, dur) in enumerate(zip(image_paths, scene_texts, durations)):
-            zoom_in = (i % 2 == 0)
-            kb_path = str(ws / f"kb_{i:02d}.mp4")
-            cap_path = str(ws / f"scene_{i:02d}.mp4")
-
-            print(f"\n🎬 Scene {i+1}/{n} ({dur:.1f}s): Ken Burns...")
-            self._ken_burns(img_path, kb_path, dur, zoom_in)
-
-            print(f"🎬 Scene {i+1}/{n}: Caption '{text[:40]}...'")
-            self._add_caption(kb_path, text, cap_path)
-            scene_paths.append(cap_path)
-
-        # 2. Concatenate scenes
-        concat_list = str(ws / "concat.txt")
-        with open(concat_list, "w") as f:
-            for p in scene_paths:
-                f.write(f"file '{Path(p).resolve()}'\n")
-
-        raw_video = str(ws / "video_silent.mp4")
-        result = subprocess.run([
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", concat_list,
-            "-c", "copy",
-            raw_video
-        ], capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Concat failed:\n{result.stderr.decode()}")
-
-        # 3. Mix narration + optional background music
-        final_path = str(ws / "final_video.mp4")
-
-        if music_path and os.path.exists(music_path):
-            # Fade music in over first 1s, out over last 2s for polish
-            audio_filter = (
-                f"[1:a]volume=1.0[narr];"
-                f"[2:a]volume={self.music_volume},"
-                f"afade=t=in:st=0:d=1,"
-                f"aloop=loop=-1:size=2e+09[music];"
-                f"[narr][music]amix=inputs=2:duration=first[out]"
+                .set_position((w - 250, h - 80))
+                .set_duration(duration)
             )
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", raw_video,
-                "-i", narration_path,
-                "-i", music_path,
-                "-filter_complex", audio_filter,
-                "-map", "0:v",
-                "-map", "[out]",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-shortest",
-                final_path
-            ]
-        else:
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", raw_video,
-                "-i", narration_path,
-                "-map", "0:v",
-                "-map", "1:a",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-shortest",
-                final_path
-            ]
+            layers.append(wm)
 
-        result = subprocess.run(cmd, capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Final mix failed:\n{result.stderr.decode()}")
+        # Hook text on first scene only
+        if i == 0 and hook_text:
+            hook = (
+                TextClip(
+                    hook_text,
+                    fontsize=int(font_size * 0.8),
+                    color="yellow",
+                    stroke_color="black",
+                    stroke_width=2,
+                    method="caption",
+                    size=(w - 80, None),
+                    font="Arial-Bold",
+                )
+                .set_position(("center", h * 0.1))
+                .set_duration(min(3, duration))
+            )
+            layers.append(hook)
 
-        print(f"\n✅ Final video: {final_path}")
-        return final_path
+        scene_clip = CompositeVideoClip(layers).set_audio(audio)
+        clips.append(scene_clip)
+
+    logger.info(f"Concatenating {len(clips)} scenes…")
+    final = concatenate_videoclips(clips, method="compose")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Rendering video to {output_path}")
+    final.write_videofile(
+        str(output_path),
+        fps=fps,
+        codec="libx264",
+        audio_codec="aac",
+        threads=2,
+        logger=None,
+    )
+    logger.info("Video render complete.")
+    return output_path

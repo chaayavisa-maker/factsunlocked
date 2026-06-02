@@ -1,170 +1,144 @@
 """
-TikTok Content Posting API v2 publisher.
-Handles token refresh + chunked video upload.
+TikTokPublisher – uploads videos to TikTok via the TikTok Content Posting API.
+
+Prerequisites
+─────────────
+1. Apply for TikTok for Developers access at https://developers.tiktok.com
+2. Create an app and enable "Content Posting API"
+3. Complete OAuth flow once using scripts/get_tiktok_token.py
+4. Store the refresh token in GitHub secret TIKTOK_REFRESH_TOKEN_ASTRO
+
+Reference: https://developers.tiktok.com/doc/content-posting-api-get-started
 """
 
 import os
-import math
+import json
 import time
-import requests
+import httpx
 from pathlib import Path
-from utils.logger import get_logger
+from src.utils.logger import get_logger
 
-log = get_logger(__name__)
+logger = get_logger(__name__)
 
-TIKTOK_API_BASE = "https://open.tiktokapis.com/v2"
-CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB per chunk (TikTok min is 5 MB)
+TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
 
-# ─── Token management ────────────────────────────────────────────────────────
-
-def _refresh_access_token() -> str:
-    """Exchange the stored refresh token for a fresh access token."""
-    client_key    = os.environ["TIKTOK_CLIENT_KEY"]
-    client_secret = os.environ["TIKTOK_CLIENT_SECRET"]
-    refresh_token = os.environ["TIKTOK_REFRESH_TOKEN"]
-
-    resp = requests.post(
-        "https://open.tiktokapis.com/v2/oauth/token/",
-        data={
-            "client_key":    client_key,
-            "client_secret": client_secret,
-            "grant_type":    "refresh_token",
-            "refresh_token": refresh_token,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=30,
-    )
-    resp.raise_for_status()
+def _refresh_access_token(
+    client_key_env: str = "TIKTOK_CLIENT_KEY_ASTRO",
+    client_secret_env: str = "TIKTOK_CLIENT_SECRET_ASTRO",
+    refresh_token_env: str = "TIKTOK_REFRESH_TOKEN_ASTRO",
+) -> str:
+    """Exchange refresh token for a new access token."""
+    payload = {
+        "client_key": os.environ[client_key_env],
+        "client_secret": os.environ[client_secret_env],
+        "grant_type": "refresh_token",
+        "refresh_token": os.environ[refresh_token_env],
+    }
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(TIKTOK_TOKEN_URL, data=payload)
+        resp.raise_for_status()
     data = resp.json()
-
-    if data.get("error"):
+    if "access_token" not in data.get("data", {}):
         raise RuntimeError(f"TikTok token refresh failed: {data}")
-
-    log.info("TikTok access token refreshed (expires in %ss)", data.get("expires_in"))
-    return data["access_token"]
+    return data["data"]["access_token"]
 
 
-# ─── Upload helpers ───────────────────────────────────────────────────────────
-
-def _init_upload(access_token: str, file_size: int, chunk_count: int,
-                 title: str, privacy: str) -> dict:
-    """Call the /post/publish/video/init/ endpoint."""
+def upload_video_tiktok(
+    video_path: Path,
+    title: str,
+    description: str = "",
+    max_duration_seconds: int = 60,
+    privacy_level: str = "PUBLIC_TO_EVERYONE",
+    disable_comment: bool = False,
+    disable_duet: bool = False,
+    disable_stitch: bool = False,
+    client_key_env: str = "TIKTOK_CLIENT_KEY_ASTRO",
+    client_secret_env: str = "TIKTOK_CLIENT_SECRET_ASTRO",
+    refresh_token_env: str = "TIKTOK_REFRESH_TOKEN_ASTRO",
+) -> str:
+    """
+    Upload a video to TikTok using the Content Posting API.
+    Returns the TikTok publish_id.
+    """
+    access_token = _refresh_access_token(
+        client_key_env, client_secret_env, refresh_token_env
+    )
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type":  "application/json; charset=UTF-8",
+        "Content-Type": "application/json; charset=UTF-8",
     }
-    body = {
+
+    video_size = video_path.stat().st_size
+    chunk_size = min(video_size, 10 * 1024 * 1024)  # 10MB max chunk
+
+    # Caption: TikTok allows 2200 chars; combine title + description
+    caption = f"{title}\n\n{description}"[:2200]
+
+    # Step 1: Initialise upload
+    init_body = {
         "post_info": {
-            "title":           title[:2200],   # TikTok max caption length
-            "privacy_level":   privacy,         # PUBLIC_TO_EVERYONE | SELF_ONLY | MUTUAL_FOLLOW_FRIENDS
-            "disable_duet":    False,
-            "disable_comment": False,
-            "disable_stitch":  False,
+            "title": caption,
+            "privacy_level": privacy_level,
+            "disable_comment": disable_comment,
+            "disable_duet": disable_duet,
+            "disable_stitch": disable_stitch,
         },
         "source_info": {
-            "source":      "FILE_UPLOAD",
-            "video_size":  file_size,
-            "chunk_size":  CHUNK_SIZE,
-            "total_chunk_count": chunk_count,
+            "source": "FILE_UPLOAD",
+            "video_size": video_size,
+            "chunk_size": chunk_size,
+            "total_chunk_count": -(-video_size // chunk_size),  # ceiling div
         },
     }
-    resp = requests.post(
-        f"{TIKTOK_API_BASE}/post/publish/video/init/",
-        json=body,
-        headers=headers,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("error", {}).get("code") not in ("ok", None, ""):
-        raise RuntimeError(f"TikTok init upload failed: {data}")
-    return data["data"]
 
-
-def _upload_chunk(upload_url: str, chunk_data: bytes,
-                  chunk_index: int, file_size: int) -> None:
-    """PUT one chunk to TikTok's upload URL."""
-    start = chunk_index * CHUNK_SIZE
-    end   = min(start + len(chunk_data), file_size) - 1
-    headers = {
-        "Content-Range": f"bytes {start}-{end}/{file_size}",
-        "Content-Type":  "video/mp4",
-        "Content-Length": str(len(chunk_data)),
-    }
-    resp = requests.put(upload_url, data=chunk_data, headers=headers, timeout=120)
-    if resp.status_code not in (200, 206):
-        raise RuntimeError(
-            f"TikTok chunk {chunk_index} upload failed "
-            f"({resp.status_code}): {resp.text}"
-        )
-    log.debug("Chunk %d uploaded ✓", chunk_index)
-
-
-def _poll_publish_status(access_token: str, publish_id: str,
-                         max_wait: int = 300) -> None:
-    """Poll until the video is published or an error is returned."""
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type":  "application/json; charset=UTF-8",
-    }
-    deadline = time.time() + max_wait
-    while time.time() < deadline:
-        resp = requests.post(
-            f"{TIKTOK_API_BASE}/post/publish/status/fetch/",
-            json={"publish_id": publish_id},
-            headers=headers,
-            timeout=30,
-        )
+    logger.info(f"Initialising TikTok upload for '{title}'…")
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(TIKTOK_INIT_URL, headers=headers, json=init_body)
         resp.raise_for_status()
-        data = resp.json().get("data", {})
-        status = data.get("status")
-        log.info("TikTok publish status: %s", status)
 
-        if status == "PUBLISH_COMPLETE":
-            log.info("✅ TikTok video published! publish_id=%s", publish_id)
-            return
-        if status in ("FAILED", "PUBLISH_FAILED"):
-            raise RuntimeError(f"TikTok publishing failed: {data}")
+    data = resp.json()
+    if data.get("error", {}).get("code") != "ok":
+        raise RuntimeError(f"TikTok init failed: {data}")
 
+    upload_url = data["data"]["upload_url"]
+    publish_id = data["data"]["publish_id"]
+
+    # Step 2: Upload chunks
+    logger.info(f"Uploading video chunks to TikTok…")
+    video_bytes = video_path.read_bytes()
+    chunks = [video_bytes[i:i+chunk_size] for i in range(0, video_size, chunk_size)]
+
+    for idx, chunk in enumerate(chunks):
+        start = idx * chunk_size
+        end = start + len(chunk) - 1
+        chunk_headers = {
+            "Content-Range": f"bytes {start}-{end}/{video_size}",
+            "Content-Type": "video/mp4",
+        }
+        with httpx.Client(timeout=120) as client:
+            put_resp = client.put(upload_url, headers=chunk_headers, content=chunk)
+            put_resp.raise_for_status()
+        logger.info(f"Chunk {idx+1}/{len(chunks)} uploaded.")
+
+    # Step 3: Poll status
+    logger.info("Polling TikTok publish status…")
+    for _ in range(20):
         time.sleep(10)
+        status_body = {"publish_id": publish_id}
+        with httpx.Client(timeout=30) as client:
+            st_resp = client.post(TIKTOK_STATUS_URL, headers=headers, json=status_body)
+            st_resp.raise_for_status()
+        st_data = st_resp.json()
+        status = st_data.get("data", {}).get("status", "")
+        logger.info(f"TikTok status: {status}")
+        if status == "PUBLISH_COMPLETE":
+            logger.info(f"TikTok publish complete! publish_id={publish_id}")
+            return publish_id
+        if status in ("FAILED", "PUBLISH_FAILED"):
+            raise RuntimeError(f"TikTok publish failed: {st_data}")
 
-    raise TimeoutError(f"TikTok publish did not complete within {max_wait}s")
-
-
-# ─── Public entry point ───────────────────────────────────────────────────────
-
-def upload_to_tiktok(video_path: str, title: str,
-                     privacy: str = "PUBLIC_TO_EVERYONE") -> str:
-    """
-    Upload *video_path* to TikTok and return the publish_id.
-
-    Required env vars:
-        TIKTOK_CLIENT_KEY
-        TIKTOK_CLIENT_SECRET
-        TIKTOK_REFRESH_TOKEN
-    """
-    video_path = Path(video_path)
-    if not video_path.exists():
-        raise FileNotFoundError(f"Video not found: {video_path}")
-
-    file_size   = video_path.stat().st_size
-    chunk_count = math.ceil(file_size / CHUNK_SIZE)
-    log.info("Uploading to TikTok: %s (%.1f MB, %d chunks)",
-             video_path.name, file_size / 1e6, chunk_count)
-
-    access_token = _refresh_access_token()
-    init_data    = _init_upload(access_token, file_size, chunk_count, title, privacy)
-    publish_id   = init_data["publish_id"]
-    upload_url   = init_data["upload_url"]
-    log.info("TikTok publish_id: %s", publish_id)
-
-    # Upload chunks
-    with open(video_path, "rb") as f:
-        for idx in range(chunk_count):
-            chunk = f.read(CHUNK_SIZE)
-            _upload_chunk(upload_url, chunk, idx, file_size)
-
-    # Poll for completion
-    _poll_publish_status(access_token, publish_id)
+    logger.warning("TikTok status polling timed out — video may still be processing.")
     return publish_id

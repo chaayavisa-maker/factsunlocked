@@ -1,0 +1,148 @@
+name: FactsUnlocked – Daily Video
+
+on:
+  schedule:
+    - cron: "0 9 * * *"          # every day at 09:00 UTC
+  workflow_dispatch:
+    inputs:
+      publish_only:
+        description: |
+          Re-publish a previous run without regenerating.
+          Paste the run_id (e.g. factsunlocked_2026-06-01_abc123).
+          Leave blank for a full generate + publish run.
+        required: false
+        default: ""
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # JOB 1 – Preflight: validate every secret before burning compute
+  # ────────────────────────────────────────────────────────────
+  preflight:
+    name: "🔍 Preflight checks"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install check dependencies
+        run: pip install httpx
+
+      - name: Check all credentials
+        env:
+          GROQ_API_KEY:            ${{ secrets.GROQ_API_KEY }}
+          YOUTUBE_CLIENT_ID:       ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:   ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN:   ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python scripts/preflight_check.py --channel factsunlocked
+
+  # ────────────────────────────────────────────────────────────
+  # JOB 2 – Generate: Groq → images → TTS → render
+  # Skipped entirely when publish_only is set.
+  # ────────────────────────────────────────────────────────────
+  generate:
+    name: "🎬 Generate video"
+    needs: preflight
+    if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      metadata_path: ${{ steps.run.outputs.metadata_path }}
+      run_id:        ${{ steps.run.outputs.run_id }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-liberation
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate video
+        id: run
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PYTHONPATH:   ${{ github.workspace }}
+        run: |
+          python src/main.py
+          # Find the metadata.json that was just written
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          RUN_ID=$(python -c "import json; print(json.load(open('$META'))['run_id'])")
+          echo "metadata_path=$META"  >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID"       >> "$GITHUB_OUTPUT"
+          echo "Metadata: $META  |  run_id: $RUN_ID"
+
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.run.outputs.run_id }}
+          path: workspace/${{ steps.run.outputs.run_id }}/
+          retention-days: 3
+
+  # ────────────────────────────────────────────────────────────
+  # JOB 3 – Publish: upload to YouTube
+  # Can be re-run independently by passing publish_only=<run_id>
+  # ────────────────────────────────────────────────────────────
+  publish:
+    name: "📤 Publish to YouTube"
+    needs: [preflight, generate]
+    # Run after generate (normal flow) OR when publish_only is given (re-run flow)
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # Normal flow: download artifact produced by the generate job
+      - name: Download artifact (normal flow)
+        if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.generate.outputs.run_id }}
+          path: workspace/${{ needs.generate.outputs.run_id }}/
+
+      # Re-run flow: download a named artifact from a previous workflow run
+      - name: Download artifact (publish-only re-run)
+        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.publish_only }}
+          path: workspace/${{ github.event.inputs.publish_only }}/
+
+      - name: Resolve metadata path
+        id: meta
+        run: |
+          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
+            RUN_ID="${{ github.event.inputs.publish_only }}"
+          else
+            RUN_ID="${{ needs.generate.outputs.run_id }}"
+          fi
+          echo "path=workspace/${RUN_ID}/metadata.json" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to YouTube
+        env:
+          YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          PYTHONPATH:            ${{ github.workspace }}
+        run: python src/main.py --publish-only ${{ steps.meta.outputs.path }}

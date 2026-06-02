@@ -1,0 +1,179 @@
+name: AstroFacts – Daily Horoscopes (12 Signs)
+
+on:
+  schedule:
+    - cron: "0 6 * * *"          # every day at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Regenerate & publish a single sign (leave blank for all 12)"
+        required: false
+        default: ""
+      publish_only:
+        description: |
+          Re-publish a previous run without regenerating.
+          Paste the manifest path (e.g. workspace/manifest_daily_2026-06-01.json).
+          Leave blank for a full generate + publish run.
+        required: false
+        default: ""
+      skip_tiktok:
+        description: "Skip TikTok upload for this run (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # JOB 1 – Preflight
+  # ────────────────────────────────────────────────────────────
+  preflight:
+    name: "🔍 Preflight checks"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install check dependencies
+        run: pip install httpx
+
+      - name: Check all credentials
+        env:
+          GROQ_API_KEY_ASTRO:            ${{ secrets.GROQ_API_KEY_ASTRO }}
+          YOUTUBE_CLIENT_ID_ASTRO:       ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
+          YOUTUBE_CLIENT_SECRET_ASTRO:   ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
+          YOUTUBE_REFRESH_TOKEN_ASTRO:   ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+          TIKTOK_CLIENT_KEY_ASTRO:       ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
+          TIKTOK_CLIENT_SECRET_ASTRO:    ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
+          TIKTOK_REFRESH_TOKEN_ASTRO:    ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+        run: |
+          SKIP_FLAG=""
+          if [ "${{ github.event.inputs.skip_tiktok }}" = "true" ]; then
+            SKIP_FLAG="--skip-tiktok"
+          fi
+          python scripts/preflight_check.py --channel astrofacts $SKIP_FLAG
+
+  # ────────────────────────────────────────────────────────────
+  # JOB 2 – Generate (12 signs → 12 video files + manifest)
+  # ────────────────────────────────────────────────────────────
+  generate:
+    name: "🎬 Generate videos"
+    needs: preflight
+    if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    outputs:
+      manifest_path: ${{ steps.run.outputs.manifest_path }}
+      artifact_name: ${{ steps.run.outputs.artifact_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-liberation
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate all 12 signs
+        id: run
+        env:
+          GROQ_API_KEY_ASTRO: ${{ secrets.GROQ_API_KEY_ASTRO }}
+          PYTHONPATH:         ${{ github.workspace }}
+        run: |
+          SIGN_ARG=""
+          if [ -n "${{ github.event.inputs.sign }}" ]; then
+            SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
+          fi
+          python src/astrofacts_main.py --period daily $SIGN_ARG
+
+          MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
+          ARTIFACT="astrofacts-daily-$(date +%Y-%m-%d)"
+          echo "manifest_path=$MANIFEST"  >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT"  >> "$GITHUB_OUTPUT"
+          echo "Manifest: $MANIFEST"
+
+      - name: Upload workspace artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.run.outputs.artifact_name }}
+          path: workspace/
+          retention-days: 3
+
+  # ────────────────────────────────────────────────────────────
+  # JOB 3 – Publish (YouTube + TikTok)
+  # Can be re-run standalone via publish_only input
+  # ────────────────────────────────────────────────────────────
+  publish:
+    name: "📤 Publish to YouTube & TikTok"
+    needs: [preflight, generate]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # Normal flow: download from generate job
+      - name: Download artifact (normal flow)
+        if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.generate.outputs.artifact_name }}
+          path: workspace/
+
+      # Re-run flow: download a named artifact from a previous run
+      - name: Download artifact (publish-only re-run)
+        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.publish_only }}
+          path: workspace/
+
+      - name: Resolve manifest path
+        id: meta
+        run: |
+          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
+            # artifact name passed in publish_only; find the manifest inside it
+            MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
+          else
+            MANIFEST="${{ needs.generate.outputs.manifest_path }}"
+          fi
+          echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
+          echo "Resolved manifest: $MANIFEST"
+
+      - name: Publish to YouTube & TikTok
+        env:
+          YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
+          YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
+          YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+          TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
+          TIKTOK_CLIENT_SECRET_ASTRO:  ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
+          TIKTOK_REFRESH_TOKEN_ASTRO:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+          PYTHONPATH:                  ${{ github.workspace }}
+        run: |
+          SIGN_ARG=""
+          if [ -n "${{ github.event.inputs.sign }}" ]; then
+            SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
+          fi
+          python src/astrofacts_main.py \
+            --period daily \
+            --publish-only ${{ steps.meta.outputs.manifest }} \
+            $SIGN_ARG

@@ -1,13 +1,22 @@
-.env
-.youtube_token.json
+# Secrets — NEVER commit these
 client_secrets.json
+client_secrets_astro.json
+.env
+*.token
+
+# Workspace (generated videos, images, audio)
 workspace/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.DS_Store
+.venv/
+venv/
 *.egg-info/
 dist/
 build/
-.venv/
-venv/
+
+# OS
+.DS_Store
+Thumbs.db
