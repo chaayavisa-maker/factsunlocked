@@ -105,13 +105,15 @@ jobs:
   publish:
     name: "📤 Publish to YouTube"
     needs: [preflight, generate]
-    # Run after generate (normal flow) OR when publish_only is given (re-run flow)
     if: |
       always() &&
       needs.preflight.result == 'success' &&
       (needs.generate.result == 'success' || needs.generate.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      actions: read      # ← allows downloading artifacts from other runs
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
