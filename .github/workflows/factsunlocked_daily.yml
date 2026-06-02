@@ -65,7 +65,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-liberation
+          sudo apt-get install -y ffmpeg fonts-liberation imageio imageio-ffmpeg
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
