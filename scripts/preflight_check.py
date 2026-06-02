@@ -126,7 +126,7 @@ def check_tiktok_token(client_key_env: str, client_secret_env: str, refresh_toke
             timeout=15,
         )
         data = resp.json()
-        token_data = data.get("data", {})
+        token_data = data.get("data", {}) or data
         err = data.get("error", {})
 
         if resp.status_code == 200 and token_data.get("access_token"):
