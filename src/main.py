@@ -25,6 +25,7 @@ from src.agents.music_agent     import MusicAgent
 from src.agents.topic_agent     import TopicAgent
 from src.agents.script_agent    import ScriptAgent
 from src.agents.seo_agent       import SEOAgent
+from src.agents.thumbnail_agent import ThumbnailAgent
 from src.platforms.youtube      import upload_video
 from src.utils.logger           import get_logger
 
@@ -45,7 +46,7 @@ TIKTOK_CFG = FU_CFG["platforms"]["tiktok"]
 WORKSPACE  = Path(CONFIG["video"]["workspace_dir"])
 
 
-# ── GENERATE ─────────────────────────────────────────────────────────────────
+# ── GENERATE ──────────────────────────────────────────────────────────────
 
 async def generate() -> dict:
     import uuid
@@ -87,12 +88,21 @@ async def generate() -> dict:
     seo = SEOAgent().generate(topic, script)
     music_credit = MusicAgent.get_credit() if music_path else ""
 
+    # 8. Thumbnail
+    thumbnail_path = ThumbnailAgent(channel="factsunlocked").generate(
+        title=seo.get("title", script.get("title", topic)),
+        subtitle="Mind Blowing",
+        channel_tag="🚀",
+        output_path=str(ws / "thumbnail.png"),
+    )
+
     metadata = {
-        "run_id":      run_id,
-        "title":       seo.get("title", script.get("title", topic)),
-        "description": seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
-        "tags":        seo.get("tags", []),
-        "video_path":  final_path,
+        "run_id":         run_id,
+        "title":          seo.get("title", script.get("title", topic)),
+        "description":    seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
+        "tags":           seo.get("tags", []),
+        "video_path":     final_path,
+        "thumbnail_path": thumbnail_path,
     }
     meta_path = ws / "metadata.json"
     meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
@@ -100,7 +110,7 @@ async def generate() -> dict:
     return metadata
 
 
-# ── PUBLISH ──────────────────────────────────────────────────────────────────
+# ── PUBLISH ───────────────────────────────────────────────────────────────
 
 def publish(metadata: dict) -> dict:
     video_path = Path(metadata["video_path"])
@@ -113,7 +123,7 @@ def publish(metadata: dict) -> dict:
     logger.info("📤 FactsUnlocked — PUBLISH")
     platform_ids = {}
 
-    # ── YouTube ──────────────────────────────────────────────────────────────
+    # ── YouTube ───────────────────────────────────────────────────────────
     if YT_CFG.get("enabled"):
         yt_id = upload_video(
             video_path=video_path,
@@ -123,11 +133,12 @@ def publish(metadata: dict) -> dict:
             category_id=YT_CFG.get("category_id", "28"),
             privacy=YT_CFG.get("privacy", "public"),
             made_for_kids=YT_CFG.get("made_for_kids", False),
+            thumbnail_path=metadata.get("thumbnail_path"),
         )
         platform_ids["youtube"] = yt_id
         logger.info(f"YouTube ✅ https://youtube.com/shorts/{yt_id}")
 
-    # ── TikTok ───────────────────────────────────────────────────────────────
+    # ── TikTok ────────────────────────────────────────────────────────────
     if TIKTOK_CFG.get("enabled"):
         from src.platforms.tiktok import upload_video_tiktok
         tt_id = upload_video_tiktok(
@@ -145,7 +156,7 @@ def publish(metadata: dict) -> dict:
     return {**metadata, "platform_ids": platform_ids}
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+# ── CLI ────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="FactsUnlocked pipeline")
