@@ -173,7 +173,14 @@ jobs:
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
+
+          MANIFEST="${{ steps.meta.outputs.manifest }}"
+          if [ -z "$MANIFEST" ]; then
+            echo "❌ No manifest path resolved — cannot publish."
+            exit 1
+          fi
+
           python src/astrofacts_main.py \
             --period daily \
-            --publish-only ${{ steps.meta.outputs.manifest }} \
+            --publish-only "$MANIFEST" \
             $SIGN_ARG
