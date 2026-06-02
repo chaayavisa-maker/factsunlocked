@@ -145,9 +145,10 @@ jobs:
       - name: Resolve metadata path
         id: meta
         run: |
-          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          META=$(find . -name "metadata.json" | sort | tail -1)
           if [ -z "$META" ]; then
-            echo "ERROR: No metadata.json found under workspace/"
+            echo "ERROR: No metadata.json found"
+            ls -la
             exit 1
           fi
           echo "path=$META" >> "$GITHUB_OUTPUT"
