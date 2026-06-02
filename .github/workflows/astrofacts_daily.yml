@@ -150,12 +150,20 @@ jobs:
       - name: Resolve manifest path
         id: meta
         run: |
-          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            # artifact name passed in publish_only; find the manifest inside it
-            MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
-          else
-            MANIFEST="${{ needs.generate.outputs.manifest_path }}"
+          # Fast path: use the output from the generate job if available
+          MANIFEST="${{ needs.generate.outputs.manifest_path }}"
+
+          # Always verify it actually exists on disk (output var can be stale/empty
+          # across runners). Fall back to scanning the downloaded workspace artifact.
+          if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
+            MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
           fi
+
+          if [ -z "$MANIFEST" ]; then
+            echo "❌ No manifest found in workspace/ — was the artifact downloaded?"
+            exit 1
+          fi
+
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
           echo "Resolved manifest: $MANIFEST"
 
