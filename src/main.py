@@ -73,7 +73,8 @@ Return JSON:
     }}
   ],
   "description": "YouTube description 150-200 chars",
-  "tags": ["8 seo tags"]
+  "tags": ["8 seo tags"],
+  "hashtags": ["#Shorts", "#DidYouKnow", "4 more topic-specific hashtags"]
 }}
 
 Exactly {VIDEO_CFG['scenes_count']} scenes."""
@@ -122,10 +123,19 @@ def generate() -> dict:
         font_size=VIDEO_CFG["font_size"],
     )
 
+    # Build hashtag line — always include #Shorts, then topic-specific ones from LLM
+    ALWAYS_ON = ["#Shorts", "#YouTubeShorts", "#DidYouKnow", "#AmazingFacts", "#Facts"]
+    llm_hashtags = script.get("hashtags", [])
+    all_hashtags = ALWAYS_ON + [h for h in llm_hashtags if h not in ALWAYS_ON]
+    hashtag_line = " ".join(all_hashtags[:10])   # YouTube allows ~500 chars of hashtags
+
+    description = script["description"].rstrip()
+    description = f"{description}\n\n{hashtag_line}"
+
     metadata = {
         "run_id":      run_id,
         "title":       script["title"],
-        "description": script["description"],
+        "description": description,
         "tags":        script.get("tags", []),
         "video_path":  str(video_path),
     }
