@@ -1,34 +1,17 @@
 """
 AstroFacts Pipeline Orchestrator
-─────────────────────────────────
-Two modes:
+Uses the same class-based agents as FactsUnlocked, with AstroFacts settings.
 
-  GENERATE mode (default):
-    Runs Groq → images → TTS → video render and saves
-    workspace/<run_id>/final_video.mp4  +  metadata.json
-    Does NOT publish.  Passes run_id to the publish job via
-    the file  workspace/latest_run_id.txt  (uploaded as a
-    GitHub Actions artifact).
-
-  PUBLISH mode  (--publish-only <run_id>):
-    Reads workspace/<run_id>/metadata.json and final_video.mp4
-    that were downloaded from the GitHub artifact, then uploads
-    to YouTube / TikTok.  No generation happens.
-
-Usage:
-    # Generate all 12 signs
-    python src/astrofacts_main.py --period daily
-
-    # Publish previously generated run
-    python src/astrofacts_main.py --period daily --publish-only <run_id>
-
-    # Single-sign test (generate + publish in one shot, for local dev)
-    python src/astrofacts_main.py --period daily --sign Aries --dev
+Modes:
+  default                        — generate all 12 signs, save manifest
+  --publish-only <manifest_path> — publish from a previous generate run
+  --sign <Sign>                  — single sign only (generate only, unless --dev)
+  --dev --sign <Sign>            — generate + publish a single sign locally
 """
 
 import argparse
+import asyncio
 import json
-import os
 import sys
 import uuid
 from datetime import date
@@ -38,13 +21,14 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.zodiac import ZODIAC_SIGNS, SIGN_SYMBOLS
+from config.zodiac               import ZODIAC_SIGNS, SIGN_SYMBOLS
+from src.agents.image_agent      import ImageAgent
+from src.agents.narration_agent  import NarrationAgent
+from src.agents.video_agent      import VideoAgent
+from src.agents.music_agent      import MusicAgent
 from src.agents.horoscope_script_agent import generate_horoscope_script, generate_seo_metadata
-from src.agents.image_agent import generate_scene_images
-from src.agents.narration_agent import generate_scene_narrations
-from src.agents.video_agent import build_video
-from src.platforms.youtube import upload_video
-from src.utils.logger import get_logger
+from src.platforms.youtube       import upload_video
+from src.utils.logger            import get_logger
 
 logger = get_logger("astrofacts")
 
@@ -52,22 +36,22 @@ CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
 with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
 
-ASTRO_CFG    = CONFIG["channels"]["astrofacts"]
-VIDEO_CFG    = ASTRO_CFG["video"]
-TTS_CFG      = ASTRO_CFG["tts"]
-API_KEY_ENV  = ASTRO_CFG["groq_api_key_env"]   # "GROQ_API_KEY_ASTRO"
-YT_CFG       = ASTRO_CFG["platforms"]["youtube"]
-TIKTOK_CFG   = ASTRO_CFG["platforms"]["tiktok"]
-WORKSPACE    = Path(CONFIG["video"]["workspace_dir"])
+ASTRO_CFG   = CONFIG["channels"]["astrofacts"]
+SETTINGS    = {                    # shape the original agents expect
+    "channel": ASTRO_CFG["channel"],
+    "video":   ASTRO_CFG["video"],
+    "tts":     ASTRO_CFG["tts"],
+}
+API_KEY_ENV = ASTRO_CFG["groq_api_key_env"]   # "GROQ_API_KEY_ASTRO"
+YT_CFG      = ASTRO_CFG["platforms"]["youtube"]
+TIKTOK_CFG  = ASTRO_CFG["platforms"]["tiktok"]
+WORKSPACE   = Path(CONFIG["video"]["workspace_dir"])
 
 
 # ── GENERATE ─────────────────────────────────────────────────────────────────
 
-def generate_sign(sign: str, period: str) -> dict:
-    """
-    Generate video for one sign.  Returns a metadata dict that includes the
-    video path.  Does NOT publish.
-    """
+async def generate_sign(sign: str, period: str) -> dict:
+    """Full generation pipeline for one (sign, period). Does NOT publish."""
     run_id = (
         f"astrofacts_{period}_{sign.lower()}"
         f"_{date.today().isoformat()}_{uuid.uuid4().hex[:6]}"
@@ -80,75 +64,62 @@ def generate_sign(sign: str, period: str) -> dict:
     logger.info(f"  GENERATE | {symbol} {sign} | {period.upper()} | {date.today()}")
     logger.info("=" * 60)
 
-    # 1 – Script
+    # 1. Script (real planetary data injected inside)
     script = generate_horoscope_script(sign, period, api_key_env=API_KEY_ENV)
-    scenes = script["scenes"]
-    if script.get("hook"):
-        scenes[0]["narration"] = script["hook"] + " " + scenes[0]["narration"]
-    if script.get("closing_cta"):
-        scenes[-1]["narration"] += " " + script["closing_cta"]
 
-    # 2 – SEO
-    seo   = generate_seo_metadata(sign, period, script, api_key_env=API_KEY_ENV)
-    title = seo["title"]
-    description = seo["description"]
-    tags  = seo["tags"]
+    # 2. SEO metadata
+    seo = generate_seo_metadata(sign, period, script, api_key_env=API_KEY_ENV)
 
-    # 3 – Images
-    img_paths = generate_scene_images(
-        scenes, ws / "images",
-        width=VIDEO_CFG["resolution"][0],
-        height=VIDEO_CFG["resolution"][1],
+    # 3. Images — ImageAgent uses AstroFacts visual_style automatically
+    image_paths = ImageAgent(SETTINGS).generate_all(script, ws)
+    if not image_paths:
+        raise RuntimeError(f"No images generated for {sign} {period}")
+
+    # 4. Narration → (combined_audio, scene_durations)
+    narration_path, scene_durations = await NarrationAgent(SETTINGS).generate(script, ws)
+
+    # 5. Music
+    music_path = MusicAgent(SETTINGS).get_track(ws)
+
+    # 6. Video — VideoAgent reads watermark from SETTINGS["video"]["watermark"]
+    hook_text = f"{symbol} {sign} {period.title()} Horoscope"
+    final_path = VideoAgent(SETTINGS).assemble(
+        workspace=str(ws),
+        image_paths=image_paths,
+        narration_path=str(narration_path),
+        music_path=music_path,
+        script=script,
+        scene_durations=scene_durations,
+        hook_text=hook_text,
     )
 
-    # 4 – Narration
-    aud_paths = generate_scene_narrations(
-        scenes, ws / "audio", voice=TTS_CFG["voice"]
-    )
-
-    # 5 – Video
-    video_path = ws / "final_video.mp4"
-    build_video(
-        scenes=scenes,
-        image_paths=img_paths,
-        audio_paths=aud_paths,
-        output_path=video_path,
-        resolution=tuple(VIDEO_CFG["resolution"]),
-        fps=VIDEO_CFG["fps"],
-        font_size=VIDEO_CFG["font_size"],
-        watermark=VIDEO_CFG.get("watermark"),
-        hook_text=f"{symbol} {sign} {period.title()} Horoscope",
-    )
-
-    # 6 – Persist metadata so publish job can read it without regenerating
+    music_credit = MusicAgent.get_credit() if music_path else ""
     metadata = {
         "run_id":      run_id,
         "sign":        sign,
         "period":      period,
-        "title":       title,
-        "description": description,
-        "tags":        tags,
-        "video_path":  str(video_path),
+        "title":       seo.get("title", script.get("title", f"{sign} {period.title()} Horoscope")),
+        "description": seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
+        "tags":        seo.get("tags", []),
+        "video_path":  final_path,
     }
     meta_path = ws / "metadata.json"
     meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
-    logger.info(f"Metadata written → {meta_path}")
-
+    logger.info(f"Metadata → {meta_path}")
     return metadata
 
 
-def generate_all_signs(period: str) -> list[dict]:
+async def generate_all_signs(period: str) -> list[dict]:
     logger.info(f"🔮 GENERATE — {period.upper()} batch for all 12 signs")
     results, errors = [], []
 
     for sign in ZODIAC_SIGNS:
         try:
-            results.append(generate_sign(sign, period))
+            results.append(await generate_sign(sign, period))
         except Exception as e:
             logger.error(f"❌ Generate failed for {sign}: {e}", exc_info=True)
             errors.append(sign)
 
-    # Write a manifest so the publish job knows which run_ids to download
     manifest_path = WORKSPACE / f"manifest_{period}_{date.today().isoformat()}.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(
@@ -156,8 +127,7 @@ def generate_all_signs(period: str) -> list[dict]:
         indent=2,
     ))
     logger.info(f"Manifest → {manifest_path}")
-
-    logger.info(f"\nGenerate complete — {len(results)}/12 succeeded")
+    logger.info(f"Generate complete — {len(results)}/12 succeeded")
     if errors:
         logger.error(f"Failed signs: {errors}")
     return results
@@ -166,12 +136,9 @@ def generate_all_signs(period: str) -> list[dict]:
 # ── PUBLISH ──────────────────────────────────────────────────────────────────
 
 def publish_sign(metadata: dict) -> dict:
-    """
-    Publish one sign's video to YouTube and/or TikTok.
-    Reads pre-rendered video from metadata['video_path'].
-    """
-    sign    = metadata["sign"]
-    period  = metadata["period"]
+    """Upload one sign's video to YouTube and/or TikTok."""
+    sign      = metadata["sign"]
+    period    = metadata["period"]
     video_path = Path(metadata["video_path"])
 
     logger.info("=" * 60)
@@ -180,13 +147,12 @@ def publish_sign(metadata: dict) -> dict:
 
     if not video_path.exists():
         raise FileNotFoundError(
-            f"Video not found at {video_path}. "
-            "Make sure the generate artifact was downloaded before this job."
+            f"Video not found: {video_path}\n"
+            "Make sure the generate artifact was downloaded first."
         )
 
     platform_ids = {}
 
-    # YouTube
     if YT_CFG.get("enabled"):
         playlist_id = YT_CFG.get("playlist_ids", {}).get(period)
         yt_id = upload_video(
@@ -205,7 +171,6 @@ def publish_sign(metadata: dict) -> dict:
         platform_ids["youtube"] = yt_id
         logger.info(f"YouTube ✅ https://youtube.com/shorts/{yt_id}")
 
-    # TikTok
     if TIKTOK_CFG.get("enabled"):
         from src.platforms.tiktok import upload_video_tiktok
         tt_id = upload_video_tiktok(
@@ -220,8 +185,7 @@ def publish_sign(metadata: dict) -> dict:
     return {**metadata, "platform_ids": platform_ids}
 
 
-def publish_from_manifest(manifest_path: Path) -> None:
-    """Publish all signs listed in a manifest JSON (used by the publish job)."""
+def publish_from_manifest(manifest_path: Path, sign: str = None) -> None:
     manifest = json.loads(manifest_path.read_text())
     period   = manifest["period"]
     run_ids  = manifest["runs"]
@@ -235,79 +199,46 @@ def publish_from_manifest(manifest_path: Path) -> None:
             logger.error(f"metadata.json missing for run_id={run_id} — skipping")
             errors.append(run_id)
             continue
+        metadata = json.loads(meta_path.read_text())
+        # If --sign was given, only publish that one
+        if sign and metadata.get("sign", "").lower() != sign.lower():
+            continue
         try:
-            metadata = json.loads(meta_path.read_text())
             publish_sign(metadata)
         except Exception as e:
-            logger.error(f"❌ Publish failed for run_id={run_id}: {e}", exc_info=True)
+            logger.error(f"❌ Publish failed for {run_id}: {e}", exc_info=True)
             errors.append(run_id)
 
-    logger.info(f"\nPublish complete — {len(run_ids)-len(errors)}/{len(run_ids)} succeeded")
     if errors:
         logger.error(f"Failed run_ids: {errors}")
         sys.exit(1)
-
-
-# ── LOCAL DEV: single-sign generate + publish in one shot ────────────────────
-
-def dev_run(sign: str, period: str) -> None:
-    metadata = generate_sign(sign, period)
-    publish_sign(metadata)
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="AstroFacts pipeline")
-    parser.add_argument(
-        "--period",
-        choices=["daily", "weekly", "monthly", "yearly"],
-        required=True,
-    )
-    parser.add_argument(
-        "--sign",
-        choices=ZODIAC_SIGNS + [s.lower() for s in ZODIAC_SIGNS],
-        default=None,
-        help="Single sign (for testing / manual reruns)",
-    )
-    parser.add_argument(
-        "--publish-only",
-        metavar="MANIFEST_PATH",
-        default=None,
-        help="Path to manifest JSON from a previous generate run. "
-             "Skips generation entirely and only publishes.",
-    )
-    parser.add_argument(
-        "--dev",
-        action="store_true",
-        help="Generate AND publish in a single process (local dev only)",
-    )
+    parser.add_argument("--period", choices=["daily","weekly","monthly","yearly"], required=True)
+    parser.add_argument("--sign",   choices=ZODIAC_SIGNS + [s.lower() for s in ZODIAC_SIGNS], default=None)
+    parser.add_argument("--publish-only", metavar="MANIFEST_PATH", default=None)
+    parser.add_argument("--dev", action="store_true", help="Generate + publish (local dev)")
     args = parser.parse_args()
+
     period = args.period
     sign   = args.sign.title() if args.sign else None
 
     if args.publish_only:
-        # ── Publish-only mode (re-run of failed publish job) ─────────────────
-        manifest_path = Path(args.publish_only)
-        if sign:
-            # Re-publish a single sign from a known run workspace
-            meta_path = manifest_path / "metadata.json" if manifest_path.is_dir() else manifest_path
-            metadata  = json.loads(meta_path.read_text())
-            publish_sign(metadata)
-        else:
-            publish_from_manifest(manifest_path)
+        publish_from_manifest(Path(args.publish_only), sign=sign)
 
     elif args.dev and sign:
-        # ── Local dev: one sign, full pipeline ───────────────────────────────
-        dev_run(sign, period)
+        metadata = asyncio.run(generate_sign(sign, period))
+        publish_sign(metadata)
 
     elif sign:
-        # ── Generate only, single sign (e.g. manual re-generate) ─────────────
-        generate_sign(sign, period)
+        asyncio.run(generate_sign(sign, period))
 
     else:
-        # ── Normal CI: generate all 12 (publish handled by separate job) ─────
-        generate_all_signs(period)
+        asyncio.run(generate_all_signs(period))
 
 
 if __name__ == "__main__":

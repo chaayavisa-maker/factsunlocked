@@ -1,71 +1,74 @@
 channels:
 
   # ─────────────────────────────────────────────
-  # CHANNEL 1 – FactsUnlocked (existing)
+  # CHANNEL 1 – FactsUnlocked (original)
   # ─────────────────────────────────────────────
   factsunlocked:
     enabled: true
-    niche: "amazing facts"
-    language: "en-US"
+    channel:
+      niche: "amazing facts"
+      language: "en-US"
+      visual_style: >-
+        cinematic dramatic lighting, photorealistic, sharp focus,
+        ultra detailed, 8K, award winning photography
     platforms:
       youtube:
         enabled: true
-        channel_id: ""            # fill after OAuth
-        category_id: "28"         # Science & Technology
+        channel_id: ""
+        category_id: "28"
         privacy: "public"
         made_for_kids: false
-      tiktok:
-        enabled: false            # not used for this channel
     groq_api_key_env: "GROQ_API_KEY"
     video:
       scenes_count: 6
-      font_size: 72
-      resolution: [1080, 1920]
+      font_size: 68
       fps: 30
+      music_volume: 0.12
     tts:
       voice: "en-US-AriaNeural"
-    schedule:
-      daily_count: 1             # 1 video/day
-      cron: "0 9 * * *"
+      rate: "+5%"
 
   # ─────────────────────────────────────────────
   # CHANNEL 2 – AstroFacts (new)
   # ─────────────────────────────────────────────
   astrofacts:
     enabled: true
-    niche: "horoscope astrology"
-    language: "en-US"
+    channel:
+      niche: "horoscope astrology"
+      language: "en-US"
+      visual_style: >-
+        cosmic ethereal mystical, nebula and stars, deep space,
+        divine light rays, photorealistic, ultra detailed, 8K
     platforms:
       youtube:
         enabled: true
-        channel_id: ""            # fill after OAuth
-        category_id: "22"         # People & Blogs
+        channel_id: ""
+        category_id: "22"
         privacy: "public"
         made_for_kids: false
         playlist_ids:
-          daily: ""               # fill after creating playlist
+          daily: ""
           weekly: ""
           monthly: ""
           yearly: ""
       tiktok:
         enabled: true
-        max_duration_seconds: 60  # TikTok short format
-    groq_api_key_env: "GROQ_API_KEY_ASTRO"   # separate Groq token!
+        max_duration_seconds: 60
+    groq_api_key_env: "GROQ_API_KEY_ASTRO"
     video:
       scenes_count: 5
       font_size: 68
-      resolution: [1080, 1920]
       fps: 30
+      music_volume: 0.10
       watermark: "AstroFacts ✨"
     tts:
-      voice: "en-US-JennyNeural"  # warm voice for horoscopes
+      voice: "en-US-JennyNeural"
+      rate: "+5%"
     schedule:
-      # 12 sign videos daily  + weekly + monthly + yearly
-      daily_count: 12            # one per zodiac sign
-      weekly_enabled: true       # runs every Monday
-      monthly_enabled: true      # runs on the 1st of each month
-      yearly_enabled: true       # runs on Jan 1st
-      # Crons are defined in the workflow files
+      daily_count: 12
+      weekly_enabled: true
+      monthly_enabled: true
+      yearly_enabled: true
 
 # ─────────────────────────────────────────────
 # Shared / global settings
@@ -73,12 +76,6 @@ channels:
 video:
   workspace_dir: "workspace"
   ffmpeg_threads: 2
-
-image:
-  provider: "pollinations"       # free
-  timeout_seconds: 90
-  width: 1080
-  height: 1920
 
 llm:
   model: "llama-3.3-70b-versatile"

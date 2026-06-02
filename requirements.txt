@@ -1,23 +1,26 @@
 # ── LLM ──────────────────────────────────────────────────────────────────────
-# Groq accessed via REST — no SDK needed
+groq>=0.9                 # Official Groq SDK (same free-tier as original)
 
 # ── Astrology engine ─────────────────────────────────────────────────────────
-ephem>=4.1            # PyEphem: VSOP87 planetary positions (same accuracy as
-                      # professional ephemeris tables). Used by astro_engine.py.
+ephem>=4.1                # PyEphem: VSOP87 real planetary positions
 
 # ── Video pipeline ───────────────────────────────────────────────────────────
-moviepy>=1.0.3
-ffmpeg-python>=0.2.0
+moviepy>=1.0.3            # Audio concatenation in narration_agent only
+ffmpeg-python>=0.2.0      # ffmpeg subprocess wrapper (video_agent uses subprocess directly)
 
 # ── TTS ──────────────────────────────────────────────────────────────────────
 edge-tts>=6.1.9
+tenacity>=8.2             # Retry logic in narration_agent
+
+# ── Image download ───────────────────────────────────────────────────────────
+requests>=2.31            # image_agent + music_agent use requests
 
 # ── YouTube upload ───────────────────────────────────────────────────────────
 google-auth>=2.29
 google-auth-oauthlib>=1.2
 google-api-python-client>=2.130
 
-# ── HTTP ─────────────────────────────────────────────────────────────────────
+# ── HTTP (preflight_check, tiktok) ───────────────────────────────────────────
 httpx>=0.27
 
 # ── Config ───────────────────────────────────────────────────────────────────

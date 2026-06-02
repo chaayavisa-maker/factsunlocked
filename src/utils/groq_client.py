@@ -1,17 +1,14 @@
 """
-Thin wrapper around the Groq REST API.
-Each channel can use a different GROQ token (to avoid rate-limit sharing).
+groq_client.py — thin wrapper around the Groq Python SDK.
+Uses the same free-tier approach as the original repo.
+Each channel passes its own api_key_env to avoid sharing rate limits.
 """
 
 import os
-import json
-import httpx
-from typing import Optional
+from groq import Groq
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 def call_groq(
@@ -23,12 +20,12 @@ def call_groq(
     api_key_env: str = "GROQ_API_KEY",
 ) -> str:
     """
-    Call Groq chat completion.
+    Call Groq chat completion via the official SDK.
 
     Parameters
     ----------
     api_key_env : str
-        Name of the environment variable that holds the API key.
+        Name of the environment variable holding the API key.
         FactsUnlocked uses ``GROQ_API_KEY``.
         AstroFacts    uses ``GROQ_API_KEY_ASTRO``.
     """
@@ -39,24 +36,17 @@ def call_groq(
             "Add it as a GitHub Actions secret."
         )
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "messages": [
+    client = Groq(api_key=api_key)
+    logger.info(f"Calling Groq ({model}) via {api_key_env}...")
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
             {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
+            {"role": "user",   "content": prompt},
         ],
-    }
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
 
-    logger.info(f"Calling Groq ({model}) via {api_key_env} ...")
-    with httpx.Client(timeout=60) as client:
-        resp = client.post(GROQ_API_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-
-    data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    return response.choices[0].message.content.strip()

@@ -1,25 +1,17 @@
 """
 FactsUnlocked Pipeline Orchestrator
-─────────────────────────────────────
-GENERATE mode (default):
-    Groq topic → script → images → TTS → video.
-    Saves workspace/<run_id>/final_video.mp4  +  metadata.json.
-    Does NOT publish.
+Uses the original class-based agents restored to their pre-regression state.
 
-PUBLISH mode (--publish-only <metadata_path>):
-    Reads an existing metadata.json and uploads the video.
-    No generation happens — safe to re-run after a publish failure.
-
-DEV mode (--dev):
-    Generate + publish in one shot (local testing only).
+Modes:
+  default        — full pipeline: generate + publish
+  --publish-only — skip generation, upload existing metadata.json
+  --dev          — generate + publish in one shot (local testing)
 """
 
 import argparse
+import asyncio
 import json
-import os
-import re
 import sys
-import uuid
 from datetime import date
 from pathlib import Path
 
@@ -27,12 +19,15 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.agents.image_agent import generate_scene_images
-from src.agents.narration_agent import generate_scene_narrations
-from src.agents.video_agent import build_video
-from src.platforms.youtube import upload_video
-from src.utils.groq_client import call_groq
-from src.utils.logger import get_logger
+from src.agents.image_agent     import ImageAgent
+from src.agents.narration_agent import NarrationAgent
+from src.agents.video_agent     import VideoAgent
+from src.agents.music_agent     import MusicAgent
+from src.agents.topic_agent     import TopicAgent
+from src.agents.script_agent    import ScriptAgent
+from src.agents.seo_agent       import SEOAgent
+from src.platforms.youtube      import upload_video
+from src.utils.logger           import get_logger
 
 logger = get_logger("factsunlocked")
 
@@ -40,104 +35,64 @@ CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
 with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
 
-FU_CFG       = CONFIG["channels"]["factsunlocked"]
-VIDEO_CFG    = FU_CFG["video"]
-TTS_CFG      = FU_CFG["tts"]
-API_KEY_ENV  = FU_CFG["groq_api_key_env"]   # "GROQ_API_KEY"
-YT_CFG       = FU_CFG["platforms"]["youtube"]
-WORKSPACE    = Path(CONFIG["video"]["workspace_dir"])
-
-
-# ── Groq helpers ─────────────────────────────────────────────────────────────
-
-def research_topic() -> str:
-    return call_groq(
-        "Give me one fascinating, little-known fact about science, history, "
-        "nature, or technology that would work perfectly for a 60-second YouTube "
-        "Short. Return only the topic title, nothing else.",
-        api_key_env=API_KEY_ENV,
-    )
-
-
-def write_script(topic: str) -> dict:
-    system = "You are an expert YouTube Shorts scriptwriter. Return ONLY valid JSON."
-    prompt = f"""Write a YouTube Shorts script about: {topic}
-
-Return JSON:
-{{
-  "title": "catchy title ≤60 chars",
-  "scenes": [
-    {{
-      "narration": "15-second narration",
-      "image_prompt": "detailed image generation prompt, portrait, no text"
-    }}
-  ],
-  "description": "YouTube description 150-200 chars",
-  "tags": ["8 seo tags"],
-  "hashtags": ["#Shorts", "#DidYouKnow", "4 more topic-specific hashtags"]
-}}
-
-Exactly {VIDEO_CFG['scenes_count']} scenes."""
-
-    raw = call_groq(prompt, system=system, max_tokens=1200, api_key_env=API_KEY_ENV)
-    try:
-        return json.loads(raw)
-    except Exception:
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            return json.loads(m.group())
-        raise
+FU_CFG   = CONFIG["channels"]["factsunlocked"]
+SETTINGS = {                       # shape the original agents expect
+    "channel": FU_CFG["channel"],
+    "video":   FU_CFG["video"],
+    "tts":     FU_CFG["tts"],
+}
+YT_CFG   = FU_CFG["platforms"]["youtube"]
+WORKSPACE = Path(CONFIG["video"]["workspace_dir"])
 
 
 # ── GENERATE ─────────────────────────────────────────────────────────────────
 
-def generate() -> dict:
+async def generate() -> dict:
+    import uuid
     run_id = f"factsunlocked_{date.today().isoformat()}_{uuid.uuid4().hex[:6]}"
     ws = WORKSPACE / run_id
     ws.mkdir(parents=True, exist_ok=True)
 
     logger.info("🔬 FactsUnlocked — GENERATE")
 
-    topic  = research_topic()
+    # 1. Topic
+    topic = TopicAgent().get_topic()
     logger.info(f"Topic: {topic}")
 
-    script = write_script(topic)
-    scenes = script["scenes"]
+    # 2. Script
+    script = ScriptAgent(SETTINGS).generate(topic)
 
-    img_paths = generate_scene_images(
-        scenes, ws / "images",
-        width=VIDEO_CFG["resolution"][0],
-        height=VIDEO_CFG["resolution"][1],
-    )
-    aud_paths = generate_scene_narrations(
-        scenes, ws / "audio", voice=TTS_CFG["voice"]
-    )
-    video_path = ws / "final_video.mp4"
-    build_video(
-        scenes=scenes,
-        image_paths=img_paths,
-        audio_paths=aud_paths,
-        output_path=video_path,
-        resolution=tuple(VIDEO_CFG["resolution"]),
-        fps=VIDEO_CFG["fps"],
-        font_size=VIDEO_CFG["font_size"],
+    # 3. Images
+    image_paths = ImageAgent(SETTINGS).generate_all(script, ws)
+    if not image_paths:
+        raise RuntimeError("No images were generated — aborting.")
+
+    # 4. Narration  →  (combined_audio_path, per_scene_durations)
+    narration_path, scene_durations = await NarrationAgent(SETTINGS).generate(script, ws)
+
+    # 5. Music
+    music_path = MusicAgent(SETTINGS).get_track(ws)
+
+    # 6. Video
+    final_path = VideoAgent(SETTINGS).assemble(
+        workspace=str(ws),
+        image_paths=image_paths,
+        narration_path=str(narration_path),
+        music_path=music_path,
+        script=script,
+        scene_durations=scene_durations,
     )
 
-    # Build hashtag line — always include #Shorts, then topic-specific ones from LLM
-    ALWAYS_ON = ["#Shorts", "#YouTubeShorts", "#DidYouKnow", "#AmazingFacts", "#Facts"]
-    llm_hashtags = script.get("hashtags", [])
-    all_hashtags = ALWAYS_ON + [h for h in llm_hashtags if h not in ALWAYS_ON]
-    hashtag_line = " ".join(all_hashtags[:10])   # YouTube allows ~500 chars of hashtags
-
-    description = script["description"].rstrip()
-    description = f"{description}\n\n{hashtag_line}"
+    # 7. SEO metadata
+    seo = SEOAgent().generate(topic, script)
+    music_credit = MusicAgent.get_credit() if music_path else ""
 
     metadata = {
         "run_id":      run_id,
-        "title":       script["title"],
-        "description": description,
-        "tags":        script.get("tags", []),
-        "video_path":  str(video_path),
+        "title":       seo.get("title", script.get("title", topic)),
+        "description": seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
+        "tags":        seo.get("tags", []),
+        "video_path":  final_path,
     }
     meta_path = ws / "metadata.json"
     meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
@@ -152,11 +107,9 @@ def publish(metadata: dict) -> str:
     if not video_path.exists():
         raise FileNotFoundError(
             f"Video not found: {video_path}\n"
-            "Ensure the generate artifact was downloaded before running publish."
+            "Make sure the generate artifact was downloaded before running publish."
         )
-
     logger.info("📤 FactsUnlocked — PUBLISH")
-
     yt_id = upload_video(
         video_path=video_path,
         title=metadata["title"],
@@ -174,29 +127,18 @@ def publish(metadata: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="FactsUnlocked pipeline")
-    parser.add_argument(
-        "--publish-only",
-        metavar="METADATA_PATH",
-        default=None,
-        help="Path to metadata.json from a previous generate run. "
-             "Skips generation and only publishes.",
-    )
-    parser.add_argument(
-        "--dev",
-        action="store_true",
-        help="Generate AND publish in one shot (local dev only)",
-    )
+    parser.add_argument("--publish-only", metavar="METADATA_PATH", default=None)
+    parser.add_argument("--dev", action="store_true")
     args = parser.parse_args()
 
     if args.publish_only:
-        meta_path = Path(args.publish_only)
-        metadata  = json.loads(meta_path.read_text())
+        metadata = json.loads(Path(args.publish_only).read_text())
         publish(metadata)
     elif args.dev:
-        metadata = generate()
+        metadata = asyncio.run(generate())
         publish(metadata)
     else:
-        generate()
+        asyncio.run(generate())
 
 
 if __name__ == "__main__":
