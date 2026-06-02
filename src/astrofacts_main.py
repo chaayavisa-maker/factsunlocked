@@ -68,33 +68,26 @@ async def generate_sign(sign: str, period: str) -> dict:
     script = generate_horoscope_script(sign, period, api_key_env=API_KEY_ENV)
 
     # ── Adapt horoscope script format to what the shared agents expect ────────
-    # ImageAgent reads script["image_queries"] — a flat list, one entry per
-    # visual slot: [hook_visual] + [one per scene] + [payoff_visual]
     from config.zodiac import SIGN_ELEMENTS
     element = SIGN_ELEMENTS.get(sign, "cosmic")
     scenes  = script.get("scenes", [])
     script["image_queries"] = (
-        # Hook visual — establishes the sign's cosmic identity
         [f"{sign} zodiac {symbol}, cosmic {element} energy, glowing constellation, "
          f"ethereal nebula, mystical stars, cinematic, 8K, portrait"]
-        # One image per scene, taken from each scene's image_prompt
         + [s.get("image_prompt",
                   f"cosmic {sign} astrology, {element} element energy, ethereal light, mystical")
            for s in scenes]
-        # Payoff visual — closing cosmic flourish
         + [f"{sign} constellation illuminated, divine golden light rays, deep space, "
            f"mystical fortune, cosmic energy, cinematic, portrait"]
     )
-    # VideoAgent reads script["payoff"] for the last scene text
     script.setdefault("payoff", script.get("closing_cta", ""))
-    # NarrationAgent reads script["outro"] for the audio-only closing clip
     script.setdefault("outro", f"Subscribe for your {sign} horoscope every single day!")
     # ─────────────────────────────────────────────────────────────────────────
 
     # 2. SEO metadata
     seo = generate_seo_metadata(sign, period, script, api_key_env=API_KEY_ENV)
 
-    # 3. Images — ImageAgent uses AstroFacts visual_style automatically
+    # 3. Images
     image_paths = ImageAgent(SETTINGS).generate_all(script, ws)
     if not image_paths:
         raise RuntimeError(f"No images generated for {sign} {period}")
@@ -105,7 +98,7 @@ async def generate_sign(sign: str, period: str) -> dict:
     # 5. Music
     music_path = MusicAgent(SETTINGS).get_track(ws)
 
-    # 6. Video — VideoAgent reads watermark from SETTINGS["video"]["watermark"]
+    # 6. Video
     hook_text = f"{symbol} {sign} {period.title()} Horoscope"
     final_path = VideoAgent(SETTINGS).assemble(
         workspace=str(ws),
@@ -161,8 +154,8 @@ async def generate_all_signs(period: str) -> list[dict]:
 
 def publish_sign(metadata: dict) -> dict:
     """Upload one sign's video to YouTube and/or TikTok."""
-    sign      = metadata["sign"]
-    period    = metadata["period"]
+    sign       = metadata["sign"]
+    period     = metadata["period"]
     video_path = Path(metadata["video_path"])
 
     logger.info("=" * 60)
@@ -224,7 +217,6 @@ def publish_from_manifest(manifest_path: Path, sign: str = None) -> None:
             errors.append(run_id)
             continue
         metadata = json.loads(meta_path.read_text())
-        # If --sign was given, only publish that one
         if sign and metadata.get("sign", "").lower() != sign.lower():
             continue
         try:
@@ -247,9 +239,9 @@ def main():
     parser.add_argument("--publish-only", metavar="MANIFEST_PATH", nargs="?", const=None, default=None)
     parser.add_argument("--dev", action="store_true", help="Generate + publish (local dev)")
     args = parser.parse_args()
-    # Guard: --publish-only was passed without a path (empty shell variable)
+
     if hasattr(args, 'publish_only') and args.publish_only is not None and not args.publish_only.strip():
-      args.publish_only = None
+        args.publish_only = None
 
     period = args.period
     sign   = args.sign.title() if args.sign else None
@@ -262,7 +254,14 @@ def main():
         publish_sign(metadata)
 
     elif sign:
-        asyncio.run(generate_sign(sign, period))
+        metadata = asyncio.run(generate_sign(sign, period))
+        manifest_path = WORKSPACE / f"manifest_{period}_{date.today().isoformat()}.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(
+            {"period": period, "runs": [metadata["run_id"]], "failed": []},
+            indent=2,
+        ))
+        logger.info(f"Manifest → {manifest_path}")
 
     else:
         asyncio.run(generate_all_signs(period))
