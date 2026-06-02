@@ -41,7 +41,8 @@ def _refresh_access_token(
         resp = client.post(TIKTOK_TOKEN_URL, data=payload)
         resp.raise_for_status()
     data = resp.json()
-    if "access_token" not in data.get("data", {}):
+    token_data = data.get("data") or data
+    if "access_token" not in token_data:
         raise RuntimeError(f"TikTok token refresh failed: {data}")
     return data["data"]["access_token"]
 
