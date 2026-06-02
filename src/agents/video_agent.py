@@ -40,7 +40,7 @@ class VideoAgent:
             zoom_expr = "if(eq(on,1),1.12,max(zoom-0.0004,1.0))"
 
         vf = (
-            f"scale={self.w*2}:{self.h*2},"   # upscale first → cleaner zoompan
+            f"scale={self.w*2}:{self.h*2},"
             f"zoompan="
             f"z='{zoom_expr}':"
             f"d={frames}:"
@@ -72,11 +72,6 @@ class VideoAgent:
 
     def _add_caption(self, video_path: str, text: str, out_path: str,
                      watermark: str = None, hook_text: str = None):
-        """
-        Renders captions using `textfile=` so apostrophes, colons, slashes,
-        and other special characters never corrupt the ffmpeg filtergraph.
-        Optionally overlays a watermark (bottom-right) and hook text (top).
-        """
         if not text.strip():
             result = subprocess.run(
                 ["ffmpeg", "-y", "-i", video_path, *_ENCODE_FLAGS, out_path],
@@ -92,7 +87,6 @@ class VideoAgent:
         tmpfiles = []
 
         try:
-            # Main caption textfile
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".txt", delete=False, encoding="utf-8"
             ) as tf:
@@ -102,7 +96,6 @@ class VideoAgent:
 
             font_size = self.font_size
 
-            # Two drawtext passes: shadow then main
             shadow = (
                 f"drawtext="
                 f"textfile='{txt_path}':"
@@ -133,7 +126,6 @@ class VideoAgent:
 
             filters = [shadow, main]
 
-            # Optional watermark (bottom-right corner)
             if watermark:
                 with tempfile.NamedTemporaryFile(
                     mode="w", suffix=".txt", delete=False, encoding="utf-8"
@@ -152,7 +144,6 @@ class VideoAgent:
                     f"fix_bounds=true"
                 )
 
-            # Optional hook text (top of frame, first scene only)
             if hook_text:
                 with tempfile.NamedTemporaryFile(
                     mode="w", suffix=".txt", delete=False, encoding="utf-8"
@@ -193,6 +184,57 @@ class VideoAgent:
                     pass
 
     # ------------------------------------------------------------------
+    # Helper: probe duration of any media file
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _probe_duration(path: str) -> float:
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    path,
+                ],
+                capture_output=True, text=True, check=True,
+            )
+            return float(result.stdout.strip())
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
+    # Pad video so its duration matches target_duration (freeze last frame)
+    # ------------------------------------------------------------------
+    def _pad_video_to_duration(self, video_path: str, out_path: str, target_duration: float):
+        """
+        Extend video to target_duration by freezing the last frame.
+        If video is already >= target_duration, stream-copy to out_path unchanged.
+        """
+        video_dur = self._probe_duration(video_path)
+        pad_seconds = target_duration - video_dur
+
+        if pad_seconds <= 0.05:
+            # Already long enough — just copy
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", video_path, "-c", "copy", out_path],
+                capture_output=True, check=True,
+            )
+            return
+
+        logger.info(f"  Padding video by {pad_seconds:.2f}s to cover outro narration")
+        # tpad=stop_mode=clone freezes the last frame for stop_duration seconds
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vf", f"tpad=stop_mode=clone:stop_duration={pad_seconds:.3f}",
+            *_ENCODE_FLAGS,
+            out_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Video padding failed:\n{result.stderr.decode()}")
+
+    # ------------------------------------------------------------------
     # Main assembly
     # ------------------------------------------------------------------
     def assemble(
@@ -207,7 +249,6 @@ class VideoAgent:
     ) -> str:
         ws = Path(workspace)
 
-        # Build scene text list: hook → body scenes → payoff
         scene_texts = (
             [script.get("hook", "")]
             + [
@@ -228,16 +269,7 @@ class VideoAgent:
             logger.info(f"Using per-scene durations: {[f'{d:.1f}s' for d in durations]}")
         else:
             try:
-                result = subprocess.run(
-                    [
-                        "ffprobe", "-v", "error",
-                        "-show_entries", "format=duration",
-                        "-of", "default=noprint_wrappers=1:nokey=1",
-                        narration_path,
-                    ],
-                    capture_output=True, text=True, check=True,
-                )
-                total_duration = float(result.stdout.strip())
+                total_duration = self._probe_duration(narration_path)
             except Exception:
                 total_duration = n * 10.0
             even = max(total_duration / n, _MIN_SCENE_DURATION)
@@ -255,7 +287,6 @@ class VideoAgent:
             self._ken_burns(img_path, kb_path, dur, zoom_in)
 
             logger.info(f"🎬 Scene {i+1}/{n}: Caption '{text[:40]}...'")
-            # Pass hook_text only to the first scene
             scene_hook = hook_text if (i == 0 and hook_text) else None
             self._add_caption(
                 kb_path, text, cap_path,
@@ -281,20 +312,30 @@ class VideoAgent:
         if result.returncode != 0:
             raise RuntimeError(f"Concat failed:\n{result.stderr.decode()}")
 
+        # ── FIX: Pad video to full narration length so the outro isn't cut ──
+        # narration.mp3 contains all clips including the outro, but raw_video
+        # only covers scene_durations (which excludes the outro clip).
+        # Without padding, -shortest would truncate narration at video end.
+        narration_duration = self._probe_duration(narration_path)
+        padded_video = str(ws / "video_padded.mp4")
+        self._pad_video_to_duration(raw_video, padded_video, narration_duration)
+
         # 3. Mix narration + optional background music
         final_path = str(ws / "final_video.mp4")
 
         if music_path and os.path.exists(music_path):
-            audio_filter = audio_filter = (
-    f"[1:a]volume=1.0[narr];"
-    f"[2:a]volume={self.music_volume},"
-    f"afade=t=in:st=0:d=1,"
-    f"aloop=loop=-1:size=2000000000[music];"
-    f"[narr][music]amix=inputs=2:duration=longest:dropout_transition=0[out]"
-)
+            # duration=first → audio ends when narration ends (not when music loops end)
+            # Music fades out over the last 2 seconds of narration
+            audio_filter = (
+                f"[1:a]volume=1.0[narr];"
+                f"[2:a]volume={self.music_volume},"
+                f"afade=t=in:st=0:d=1,"
+                f"aloop=loop=-1:size=2000000000[music];"
+                f"[narr][music]amix=inputs=2:duration=first:dropout_transition=2[out]"
+            )
             cmd = [
                 "ffmpeg", "-y",
-                "-i", raw_video,
+                "-i", padded_video,       # ← padded video
                 "-i", narration_path,
                 "-i", music_path,
                 "-filter_complex", audio_filter,
@@ -303,20 +344,19 @@ class VideoAgent:
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",
-                "-shortest",
+                # No -shortest: padded_video already matches narration length
                 final_path
             ]
         else:
             cmd = [
                 "ffmpeg", "-y",
-                "-i", raw_video,
+                "-i", padded_video,       # ← padded video
                 "-i", narration_path,
                 "-map", "0:v",
                 "-map", "1:a",
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",
-                "-shortest",
                 final_path
             ]
 
