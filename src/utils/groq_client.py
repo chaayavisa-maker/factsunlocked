@@ -17,7 +17,7 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 def call_groq(
     prompt: str,
     system: str = "You are a helpful assistant.",
-    model: str = "llama-3.1-70b-versatile",
+    model: str = "llama-3.3-70b-versatile",
     temperature: float = 0.7,
     max_tokens: int = 1024,
     api_key_env: str = "GROQ_API_KEY",
