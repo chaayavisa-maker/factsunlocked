@@ -67,6 +67,30 @@ async def generate_sign(sign: str, period: str) -> dict:
     # 1. Script (real planetary data injected inside)
     script = generate_horoscope_script(sign, period, api_key_env=API_KEY_ENV)
 
+    # ── Adapt horoscope script format to what the shared agents expect ────────
+    # ImageAgent reads script["image_queries"] — a flat list, one entry per
+    # visual slot: [hook_visual] + [one per scene] + [payoff_visual]
+    from config.zodiac import SIGN_ELEMENTS
+    element = SIGN_ELEMENTS.get(sign, "cosmic")
+    scenes  = script.get("scenes", [])
+    script["image_queries"] = (
+        # Hook visual — establishes the sign's cosmic identity
+        [f"{sign} zodiac {symbol}, cosmic {element} energy, glowing constellation, "
+         f"ethereal nebula, mystical stars, cinematic, 8K, portrait"]
+        # One image per scene, taken from each scene's image_prompt
+        + [s.get("image_prompt",
+                  f"cosmic {sign} astrology, {element} element energy, ethereal light, mystical")
+           for s in scenes]
+        # Payoff visual — closing cosmic flourish
+        + [f"{sign} constellation illuminated, divine golden light rays, deep space, "
+           f"mystical fortune, cosmic energy, cinematic, portrait"]
+    )
+    # VideoAgent reads script["payoff"] for the last scene text
+    script.setdefault("payoff", script.get("closing_cta", ""))
+    # NarrationAgent reads script["outro"] for the audio-only closing clip
+    script.setdefault("outro", f"Subscribe for your {sign} horoscope every single day!")
+    # ─────────────────────────────────────────────────────────────────────────
+
     # 2. SEO metadata
     seo = generate_seo_metadata(sign, period, script, api_key_env=API_KEY_ENV)
 
