@@ -3,9 +3,9 @@ import json
 import re
 from groq import Groq
 from tenacity import retry, stop_after_attempt, wait_exponential
-from utils.logger import setup_logger
+from utils.logger import get_logger
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 MAX_TITLE_LEN = 100
 MAX_DESC_LEN = 5000
