@@ -142,6 +142,14 @@ jobs:
           run-id: ${{ github.event.inputs.publish_only }}
           path: workspace/
 
+      - name: Debug downloaded files
+        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
+        run: |
+          echo "=== Root ==="
+          ls -la
+          echo "=== All files downloaded ==="
+          find . -not -path './.git/*' -not -path './.github/*' | sort
+
       - name: Resolve metadata path
         id: meta
         run: |
