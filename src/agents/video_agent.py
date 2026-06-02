@@ -285,13 +285,13 @@ class VideoAgent:
         final_path = str(ws / "final_video.mp4")
 
         if music_path and os.path.exists(music_path):
-            audio_filter = (
-                f"[1:a]volume=1.0[narr];"
-                f"[2:a]volume={self.music_volume},"
-                f"afade=t=in:st=0:d=1,"
-                f"aloop=loop=-1:size=2e+09[music];"
-                f"[narr][music]amix=inputs=2:duration=first[out]"
-            )
+            audio_filter = audio_filter = (
+    f"[1:a]volume=1.0[narr];"
+    f"[2:a]volume={self.music_volume},"
+    f"afade=t=in:st=0:d=1,"
+    f"aloop=loop=-1:size=2000000000[music];"
+    f"[narr][music]amix=inputs=2:duration=longest:dropout_transition=0[out]"
+)
             cmd = [
                 "ffmpeg", "-y",
                 "-i", raw_video,
