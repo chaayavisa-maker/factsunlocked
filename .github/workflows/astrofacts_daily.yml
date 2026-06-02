@@ -11,8 +11,9 @@ on:
         default: ""
       publish_only:
         description: |
-          Re-publish a previous run without regenerating.
-          Paste the manifest path (e.g. workspace/manifest_daily_2026-06-01.json).
+          Re-publish without regenerating.
+          Paste the artifact NAME from a previous run
+          (e.g. astrofacts-daily-2026-06-01).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -56,6 +57,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────
   # JOB 2 – Generate (12 signs → 12 video files + manifest)
+  # Skipped when publish_only is set.
   # ────────────────────────────────────────────────────────────
   generate:
     name: "🎬 Generate videos"
@@ -92,13 +94,29 @@ jobs:
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
+
           python src/astrofacts_main.py --period daily $SIGN_ARG
 
+          # Find the manifest that was just written
           MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
-          ARTIFACT="astrofacts-daily-$(date +%Y-%m-%d)"
-          echo "manifest_path=$MANIFEST"  >> "$GITHUB_OUTPUT"
-          echo "artifact_name=$ARTIFACT"  >> "$GITHUB_OUTPUT"
-          echo "Manifest: $MANIFEST"
+          if [ -z "$MANIFEST" ]; then
+            echo "❌ No manifest_daily_*.json found in workspace/ after generation."
+            exit 1
+          fi
+
+          # Derive the artifact name from the date embedded in the manifest
+          # filename so it always matches, regardless of clock drift between jobs.
+          DATE=$(echo "$MANIFEST" | grep -oP '\d{4}-\d{2}-\d{2}')
+          if [ -z "$DATE" ]; then
+            # Fallback: use today's date on this runner
+            DATE=$(date -u +%Y-%m-%d)
+          fi
+          ARTIFACT="astrofacts-daily-${DATE}"
+
+          echo "manifest_path=$MANIFEST" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "✅ Manifest : $MANIFEST"
+          echo "✅ Artifact : $ARTIFACT"
 
       - name: Upload workspace artifact
         uses: actions/upload-artifact@v4
@@ -108,16 +126,68 @@ jobs:
           retention-days: 3
 
   # ────────────────────────────────────────────────────────────
-  # JOB 3 – Publish (YouTube + TikTok)
-  # Can be re-run standalone via publish_only input
+  # JOB 3 – Resolve which artifact to publish
+  # Outputs a single artifact_name whether this is a normal run
+  # or a publish-only re-run.
   # ────────────────────────────────────────────────────────────
-  publish:
-    name: "📤 Publish to YouTube & TikTok"
+  resolve_artifact:
+    name: "🔎 Resolve artifact name"
     needs: [preflight, generate]
     if: |
       always() &&
       needs.preflight.result == 'success' &&
       (needs.generate.result == 'success' || needs.generate.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.pick.outputs.artifact_name }}
+
+    steps:
+      - name: Pick artifact name
+        id: pick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ── publish-only: user supplied a name explicitly ──────────────────
+          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
+            echo "artifact_name=${{ github.event.inputs.publish_only }}" >> "$GITHUB_OUTPUT"
+            echo "✅ publish-only mode → ${{ github.event.inputs.publish_only }}"
+            exit 0
+          fi
+
+          # ── normal flow: use what the generate job told us ─────────────────
+          ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
+          if [ -n "$ARTIFACT" ]; then
+            echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+            echo "✅ normal flow → $ARTIFACT"
+            exit 0
+          fi
+
+          # ── last-resort fallback: query the API for the latest matching artifact ──
+          # Useful if the generate output was somehow empty (e.g. re-run of only
+          # the publish job without the generate job having run in this attempt).
+          echo "⚠️  generate output empty – querying API for latest astrofacts-daily-* artifact…"
+          LATEST=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=astrofacts-daily&per_page=100" \
+            --jq '[.artifacts[] | select(.name | startswith("astrofacts-daily-")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
+
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "❌ No unexpired astrofacts-daily-* artifact found in this repo."
+            exit 1
+          fi
+
+          echo "artifact_name=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "✅ fallback  → $LATEST"
+
+  # ────────────────────────────────────────────────────────────
+  # JOB 4 – Publish (YouTube + TikTok)
+  # ────────────────────────────────────────────────────────────
+  publish:
+    name: "📤 Publish to YouTube & TikTok"
+    needs: [preflight, resolve_artifact]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.resolve_artifact.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -131,41 +201,36 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # Normal flow: download from generate job
-      - name: Download artifact (normal flow)
-        if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.generate.outputs.artifact_name }}
+          name: ${{ needs.resolve_artifact.outputs.artifact_name }}
           path: workspace/
 
-      # Re-run flow: download a named artifact from a previous run
-      - name: Download artifact (publish-only re-run)
-        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ github.event.inputs.publish_only }}
-          path: workspace/
+      - name: Verify workspace contents
+        run: |
+          echo "📦 Artifact : ${{ needs.resolve_artifact.outputs.artifact_name }}"
+          echo "📂 workspace/ contents:"
+          ls -lah workspace/ || true
+          MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
+          if [ -z "$MANIFEST" ]; then
+            echo "❌ workspace/ downloaded but no manifest_*.json found inside."
+            echo "   Files present:"
+            find workspace -type f | head -40 || true
+            exit 1
+          fi
+          echo "✅ Manifest found: $MANIFEST"
 
       - name: Resolve manifest path
         id: meta
         run: |
-          # Fast path: use the output from the generate job if available
-          MANIFEST="${{ needs.generate.outputs.manifest_path }}"
-
-          # Always verify it actually exists on disk (output var can be stale/empty
-          # across runners). Fall back to scanning the downloaded workspace artifact.
-          if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
-            MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
-          fi
-
+          MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest found in workspace/ — was the artifact downloaded?"
+            echo "❌ No manifest found – aborting."
             exit 1
           fi
-
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
-          echo "Resolved manifest: $MANIFEST"
+          echo "✅ Resolved manifest: $MANIFEST"
 
       - name: Publish to YouTube & TikTok
         env:
@@ -182,13 +247,13 @@ jobs:
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
 
-          MANIFEST="${{ steps.meta.outputs.manifest }}"
-          if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest path resolved — cannot publish."
-            exit 1
+          SKIP_FLAG=""
+          if [ "${{ github.event.inputs.skip_tiktok }}" = "true" ]; then
+            SKIP_FLAG="--skip-tiktok"
           fi
 
           python src/astrofacts_main.py \
             --period daily \
-            --publish-only "$MANIFEST" \
-            $SIGN_ARG
+            --publish-only "${{ steps.meta.outputs.manifest }}" \
+            $SIGN_ARG \
+            $SKIP_FLAG
