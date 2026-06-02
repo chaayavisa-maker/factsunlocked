@@ -18,6 +18,9 @@ channels:
         category_id: "28"
         privacy: "public"
         made_for_kids: false
+      tiktok:
+        enabled: true
+        max_duration_seconds: 60
     groq_api_key_env: "GROQ_API_KEY"
     video:
       scenes_count: 6
