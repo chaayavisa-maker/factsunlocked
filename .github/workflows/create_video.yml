@@ -97,7 +97,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ── Restore topic history (persists across ALL daily runs) ───────────
-      # Key never changes — always restore the latest save.
       - name: Restore topic history cache
         id: topic_history_restore
         uses: actions/cache/restore@v4
@@ -116,7 +115,7 @@ jobs:
             echo "ℹ️  No topic history found — starting fresh (expected on first run)."
           fi
 
-      # ── Restore workspace from a previous run (cache miss = fresh start) ─
+      # ── Restore workspace from a previous run ───────────────────────────
       - name: Restore workspace cache
         id: cache_restore
         uses: actions/cache/restore@v4
@@ -140,6 +139,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             ffmpeg fonts-dejavu-core fonts-liberation python3-dev libffi-dev
+          # ✅ FIX: refresh font cache so Pillow/moviepy can resolve font names
+          fc-cache -fv
           ffmpeg -version | head -1
 
       - uses: actions/setup-python@v5
@@ -164,11 +165,11 @@ jobs:
           TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           DRY_RUN:               ${{ github.event.inputs.dry_run || 'false' }}
           PYTHONPATH:            ${{ github.workspace }}/src
+          # ✅ FIX: pass a guaranteed-valid font path for moviepy TextClip
+          MOVIEPY_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
         run: python src/main.py
 
-      # ── Always save topic history so next run benefits from it ───────────
-      # Save with a timestamped key so GitHub keeps it, but restore-keys
-      # prefix "topic-history-" always finds the latest one.
+      # ── Always save topic history ────────────────────────────────────────
       - name: Save topic history cache
         if: always()
         uses: actions/cache/save@v4
@@ -176,7 +177,7 @@ jobs:
           path: used_topics.json
           key: topic-history-${{ github.run_number }}
 
-      # ── Always save workspace so failed runs can be resumed ──────────────
+      # ── Always save workspace ────────────────────────────────────────────
       - name: Save workspace cache
         if: always()
         uses: actions/cache/save@v4
@@ -203,7 +204,7 @@ jobs:
           path: workspace/${{ steps.resolve_run_id.outputs.value }}/final_video.mp4
           retention-days: 7
 
-  # ── Job 3: Alert on failure (with resume instructions) ───────────────────
+  # ── Job 3: Alert on failure ───────────────────────────────────────────────
   notify-failure:
     name: Failure alert
     runs-on: ubuntu-latest
