@@ -5,6 +5,7 @@ Works for both channels; pass channel config to customise watermark/font.
 
 from pathlib import Path
 from src.utils.logger import get_logger
+import os
 
 logger = get_logger(__name__)
 
