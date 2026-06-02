@@ -33,7 +33,7 @@ def build_video(
     hook_text    : optional opening text overlay (first 2s)
     """
     try:
-        from moviepy.editor import (
+        from moviepy import (
             ImageClip,
             AudioFileClip,
             TextClip,
