@@ -1,9 +1,8 @@
 """
 FactsUnlocked Pipeline Orchestrator
-Uses the original class-based agents restored to their pre-regression state.
 
 Modes:
-  default        — full pipeline: generate + publish
+  default        — full pipeline: generate + publish (YouTube + TikTok)
   --publish-only — skip generation, upload existing metadata.json
   --dev          — generate + publish in one shot (local testing)
 """
@@ -35,14 +34,15 @@ CONFIG_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
 with open(CONFIG_PATH) as f:
     CONFIG = yaml.safe_load(f)
 
-FU_CFG   = CONFIG["channels"]["factsunlocked"]
-SETTINGS = {                       # shape the original agents expect
+FU_CFG    = CONFIG["channels"]["factsunlocked"]
+SETTINGS  = {
     "channel": FU_CFG["channel"],
     "video":   FU_CFG["video"],
     "tts":     FU_CFG["tts"],
 }
-YT_CFG   = FU_CFG["platforms"]["youtube"]
-WORKSPACE = Path(CONFIG["video"]["workspace_dir"])
+YT_CFG     = FU_CFG["platforms"]["youtube"]
+TIKTOK_CFG = FU_CFG["platforms"]["tiktok"]
+WORKSPACE  = Path(CONFIG["video"]["workspace_dir"])
 
 
 # ── GENERATE ─────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ async def generate() -> dict:
     if not image_paths:
         raise RuntimeError("No images were generated — aborting.")
 
-    # 4. Narration  →  (combined_audio_path, per_scene_durations)
+    # 4. Narration → (combined_audio_path, per_scene_durations)
     narration_path, scene_durations = await NarrationAgent(SETTINGS).generate(script, ws)
 
     # 5. Music
@@ -102,25 +102,47 @@ async def generate() -> dict:
 
 # ── PUBLISH ──────────────────────────────────────────────────────────────────
 
-def publish(metadata: dict) -> str:
+def publish(metadata: dict) -> dict:
     video_path = Path(metadata["video_path"])
     if not video_path.exists():
         raise FileNotFoundError(
             f"Video not found: {video_path}\n"
             "Make sure the generate artifact was downloaded before running publish."
         )
+
     logger.info("📤 FactsUnlocked — PUBLISH")
-    yt_id = upload_video(
-        video_path=video_path,
-        title=metadata["title"],
-        description=metadata["description"],
-        tags=metadata["tags"],
-        category_id=YT_CFG.get("category_id", "28"),
-        privacy=YT_CFG.get("privacy", "public"),
-        made_for_kids=YT_CFG.get("made_for_kids", False),
-    )
-    logger.info(f"✅ Published: https://youtube.com/shorts/{yt_id}")
-    return yt_id
+    platform_ids = {}
+
+    # ── YouTube ──────────────────────────────────────────────────────────────
+    if YT_CFG.get("enabled"):
+        yt_id = upload_video(
+            video_path=video_path,
+            title=metadata["title"],
+            description=metadata["description"],
+            tags=metadata["tags"],
+            category_id=YT_CFG.get("category_id", "28"),
+            privacy=YT_CFG.get("privacy", "public"),
+            made_for_kids=YT_CFG.get("made_for_kids", False),
+        )
+        platform_ids["youtube"] = yt_id
+        logger.info(f"YouTube ✅ https://youtube.com/shorts/{yt_id}")
+
+    # ── TikTok ───────────────────────────────────────────────────────────────
+    if TIKTOK_CFG.get("enabled"):
+        from src.platforms.tiktok import upload_video_tiktok
+        tt_id = upload_video_tiktok(
+            video_path=video_path,
+            title=metadata["title"],
+            description=metadata["description"],
+            client_key_env="TIKTOK_CLIENT_KEY",
+            client_secret_env="TIKTOK_CLIENT_SECRET",
+            refresh_token_env="TIKTOK_REFRESH_TOKEN",
+        )
+        platform_ids["tiktok"] = tt_id
+        logger.info(f"TikTok ✅ publish_id={tt_id}")
+
+    logger.info(f"✅ Published FactsUnlocked: {platform_ids}")
+    return {**metadata, "platform_ids": platform_ids}
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -138,7 +160,8 @@ def main():
         metadata = asyncio.run(generate())
         publish(metadata)
     else:
-        asyncio.run(generate())
+        metadata = asyncio.run(generate())
+        publish(metadata)
 
 
 if __name__ == "__main__":
