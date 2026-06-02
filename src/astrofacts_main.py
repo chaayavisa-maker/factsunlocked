@@ -244,9 +244,12 @@ def main():
     parser = argparse.ArgumentParser(description="AstroFacts pipeline")
     parser.add_argument("--period", choices=["daily","weekly","monthly","yearly"], required=True)
     parser.add_argument("--sign",   choices=ZODIAC_SIGNS + [s.lower() for s in ZODIAC_SIGNS], default=None)
-    parser.add_argument("--publish-only", metavar="MANIFEST_PATH", default=None)
+    parser.add_argument("--publish-only", metavar="MANIFEST_PATH", nargs="?", const=None, default=None)
     parser.add_argument("--dev", action="store_true", help="Generate + publish (local dev)")
     args = parser.parse_args()
+    # Guard: --publish-only was passed without a path (empty shell variable)
+    if hasattr(args, 'publish_only') and args.publish_only is not None and not args.publish_only.strip():
+      args.publish_only = None
 
     period = args.period
     sign   = args.sign.title() if args.sign else None
