@@ -72,6 +72,7 @@ def build_video(
                     stroke_width=2,
                     method="caption",
                     size=(w - 80, None),
+                    font="LiberationSans-Bold",
                 )
                 .with_position(("center", h * 0.75))   # v1: .set_position()
                 .with_duration(duration)                # v1: .set_duration()
