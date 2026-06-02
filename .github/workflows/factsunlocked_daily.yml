@@ -8,7 +8,8 @@ on:
       publish_only:
         description: |
           Re-publish a previous run without regenerating.
-          Paste the run_id (e.g. factsunlocked_2026-06-01_abc123).
+          Paste the GitHub Actions numeric run ID (found in the URL of the
+          original workflow run, e.g. 15234567890).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -32,10 +33,10 @@ jobs:
 
       - name: Check all credentials
         env:
-          GROQ_API_KEY:            ${{ secrets.GROQ_API_KEY }}
-          YOUTUBE_CLIENT_ID:       ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET:   ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN:   ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          GROQ_API_KEY:                  ${{ secrets.GROQ_API_KEY }}
+          YOUTUBE_CLIENT_ID:             ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET:         ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN:         ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           TIKTOK_CLIENT_KEY_ASTRO:       ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET_ASTRO:    ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN_ASTRO:    ${{ secrets.TIKTOK_REFRESH_TOKEN }}
@@ -80,8 +81,6 @@ jobs:
           TIKTOK_CLIENT_KEY:      ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET:   ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN:   ${{ secrets.TIKTOK_REFRESH_TOKEN }}
-          # repo root   → enables  "from src.utils.logger import ..."
-          # src/        → enables  "from utils.logger import ..."  (original files)
           PYTHONPATH:             ${{ github.workspace }}:${{ github.workspace }}/src
         run: |
           python src/main.py
@@ -101,7 +100,7 @@ jobs:
 
   # ────────────────────────────────────────────────────────────
   # JOB 3 – Publish: upload to YouTube
-  # Can be re-run independently by passing publish_only=<run_id>
+  # Can be re-run independently by passing publish_only=<github_run_id>
   # ────────────────────────────────────────────────────────────
   publish:
     name: "📤 Publish to YouTube"
@@ -124,7 +123,7 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # Normal flow: download artifact produced by the generate job
+      # Normal flow: download artifact produced by the generate job (same run)
       - name: Download artifact (normal flow)
         if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
         uses: actions/download-artifact@v4
@@ -132,23 +131,25 @@ jobs:
           name: ${{ needs.generate.outputs.run_id }}
           path: workspace/${{ needs.generate.outputs.run_id }}/
 
-      # Re-run flow: download a named artifact from a previous workflow run
+      # Re-run flow: download all artifacts from a previous workflow run by its numeric GitHub run ID
       - name: Download artifact (publish-only re-run)
         if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
         uses: actions/download-artifact@v4
         with:
-          name: ${{ github.event.inputs.publish_only }}
-          path: workspace/${{ github.event.inputs.publish_only }}/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.inputs.publish_only }}
+          path: workspace/
 
       - name: Resolve metadata path
         id: meta
         run: |
-          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            RUN_ID="${{ github.event.inputs.publish_only }}"
-          else
-            RUN_ID="${{ needs.generate.outputs.run_id }}"
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          if [ -z "$META" ]; then
+            echo "ERROR: No metadata.json found under workspace/"
+            exit 1
           fi
-          echo "path=workspace/${RUN_ID}/metadata.json" >> "$GITHUB_OUTPUT"
+          echo "path=$META" >> "$GITHUB_OUTPUT"
+          echo "Resolved metadata: $META"
 
       - name: Publish to YouTube
         env:
