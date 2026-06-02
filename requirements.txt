@@ -7,6 +7,8 @@ ephem>=4.1                # PyEphem: VSOP87 real planetary positions
 # ── Video pipeline ───────────────────────────────────────────────────────────
 moviepy>=1.0.3            # Audio concatenation in narration_agent only
 ffmpeg-python>=0.2.0      # ffmpeg subprocess wrapper (video_agent uses subprocess directly)
+imageio
+imageio-ffmpeg
 
 # ── TTS ──────────────────────────────────────────────────────────────────────
 edge-tts>=6.1.9
