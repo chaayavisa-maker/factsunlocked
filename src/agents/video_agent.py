@@ -32,6 +32,8 @@ def build_video(
     watermark    : optional bottom-right text overlay (e.g. "AstroFacts ✨")
     hook_text    : optional opening text overlay (first 2s)
     """
+    font = os.environ.get("MOVIEPY_FONT", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+
     try:
         from moviepy import (
             ImageClip,
@@ -72,7 +74,7 @@ def build_video(
                     stroke_width=2,
                     method="caption",
                     size=(w - 80, None),
-                    font="LiberationSans-Bold",
+                    font=font,
                 )
                 .with_position(("center", h * 0.75))   # v1: .set_position()
                 .with_duration(duration)                # v1: .set_duration()
@@ -106,7 +108,7 @@ def build_video(
                     stroke_width=2,
                     method="caption",
                     size=(w - 80, None),
-                    font="Arial-Bold",
+                    font=font,
                 )
                 .with_position(("center", h * 0.1))        # v1: .set_position()
                 .with_duration(min(3, duration))            # v1: .set_duration()
