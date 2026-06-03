@@ -9,8 +9,11 @@ Exit codes:
 
 Usage:
     python scripts/preflight_check.py --channel factsunlocked
+    python scripts/preflight_check.py --channel factsunlocked --skip-youtube
+    python scripts/preflight_check.py --channel factsunlocked --skip-tiktok
     python scripts/preflight_check.py --channel astrofacts
     python scripts/preflight_check.py --channel astrofacts --skip-tiktok
+    python scripts/preflight_check.py --channel astrofacts --skip-youtube --skip-tiktok
 """
 
 import argparse
@@ -25,9 +28,9 @@ YELLOW = "\033[33m"
 BOLD   = "\033[1m"
 RESET  = "\033[0m"
 
-def ok(msg):    print(f"  {GREEN}✔{RESET}  {msg}")
-def fail(msg):  print(f"  {RED}✘{RESET}  {BOLD}{msg}{RESET}")
-def warn(msg):  print(f"  {YELLOW}⚠{RESET}  {msg}")
+def ok(msg):     print(f"  {GREEN}✔{RESET}  {msg}")
+def fail(msg):   print(f"  {RED}✘{RESET}  {BOLD}{msg}{RESET}")
+def warn(msg):   print(f"  {YELLOW}⚠{RESET}  {msg}")
 def header(msg): print(f"\n{BOLD}{msg}{RESET}")
 
 
@@ -93,7 +96,7 @@ def check_youtube_token(client_id_env: str, client_secret_env: str, refresh_toke
         if resp.status_code == 200 and "access_token" in data:
             ok(f"YouTube OAuth exchange succeeded ({client_id_env[:30]}…)")
             return True
-        error = data.get("error", resp.status_code)
+        error      = data.get("error", resp.status_code)
         error_desc = data.get("error_description", "")
         fail(f"YouTube OAuth FAILED: {error} — {error_desc}")
         print(f"      Check {client_id_env}, {client_secret_env}, {refresh_token_env}")
@@ -124,9 +127,9 @@ def check_tiktok_token(client_key_env: str, client_secret_env: str, refresh_toke
             },
             timeout=15,
         )
-        data = resp.json()
+        data       = resp.json()
         token_data = data.get("data", {}) or data
-        err = data.get("error", {})
+        err        = data.get("error", {})
 
         if resp.status_code == 200 and token_data.get("access_token"):
             ok(f"TikTok token refresh succeeded ({client_key_env[:30]}…)")
@@ -142,60 +145,83 @@ def check_tiktok_token(client_key_env: str, client_secret_env: str, refresh_toke
         return True
 
 
+# ── Reusable credential block runners ────────────────────────────────────────
+
+def run_groq_checks(env_name: str, label: str) -> list[bool]:
+    header(f"① Groq API key ({label})")
+    return [
+        check_env_present(env_name),
+        check_groq_token(env_name),
+    ]
+
+
+def run_youtube_checks(
+    client_id_env: str,
+    client_secret_env: str,
+    refresh_token_env: str,
+    label: str,
+    section: str = "②",
+    skip: bool = False,
+) -> list[bool]:
+    if skip:
+        warn(f"YouTube checks skipped (--skip-youtube flag set)")
+        return []
+    header(f"{section} YouTube credentials ({label})")
+    results = [
+        check_env_present(client_id_env),
+        check_env_present(client_secret_env),
+        check_env_present(refresh_token_env),
+        check_youtube_token(client_id_env, client_secret_env, refresh_token_env),
+    ]
+    return results
+
+
+def run_tiktok_checks(
+    client_key_env: str,
+    client_secret_env: str,
+    refresh_token_env: str,
+    label: str,
+    section: str = "③",
+    skip: bool = False,
+) -> list[bool]:
+    if skip:
+        warn(f"TikTok checks skipped (--skip-tiktok flag set)")
+        return []
+    header(f"{section} TikTok credentials ({label})")
+    results = [
+        check_env_present(client_key_env),
+        check_env_present(client_secret_env),
+        check_env_present(refresh_token_env),
+        check_tiktok_token(client_key_env, client_secret_env, refresh_token_env),
+    ]
+    return results
+
+
 # ── Channel check suites ──────────────────────────────────────────────────────
 
-def check_factsunlocked(skip_youtube: bool = False) -> list[bool]:
-    results = []
-    header("① Groq API key (FactsUnlocked)")
-    results.append(check_env_present("GROQ_API_KEY"))
-    results.append(check_groq_token("GROQ_API_KEY"))
-
-    if skip_youtube:
-        warn("YouTube checks skipped (--skip-youtube flag set)")
-    else:
-        header("② YouTube credentials (FactsUnlocked)")
-        results.append(check_env_present("YOUTUBE_CLIENT_ID"))
-        results.append(check_env_present("YOUTUBE_CLIENT_SECRET"))
-        results.append(check_env_present("YOUTUBE_REFRESH_TOKEN"))
-        results.append(check_youtube_token(
-            "YOUTUBE_CLIENT_ID",
-            "YOUTUBE_CLIENT_SECRET",
-            "YOUTUBE_REFRESH_TOKEN",
-        ))
+def check_factsunlocked(skip_youtube: bool = False, skip_tiktok: bool = False) -> list[bool]:
+    results = run_groq_checks("GROQ_API_KEY", "FactsUnlocked")
+    results += run_youtube_checks(
+        "YOUTUBE_CLIENT_ID", "YOUTUBE_CLIENT_SECRET", "YOUTUBE_REFRESH_TOKEN",
+        label="FactsUnlocked", section="②", skip=skip_youtube,
+    )
+    results += run_tiktok_checks(
+        "TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET", "TIKTOK_REFRESH_TOKEN",
+        label="FactsUnlocked", section="③", skip=skip_tiktok,
+    )
     return results
 
 
 def check_astrofacts(skip_youtube: bool = False, skip_tiktok: bool = False) -> list[bool]:
-    results = []
-    header("① Groq API key (AstroFacts)")
-    results.append(check_env_present("GROQ_API_KEY_ASTRO"))
-    results.append(check_groq_token("GROQ_API_KEY_ASTRO"))
-
-    if skip_youtube:
-        warn("YouTube checks skipped (--skip-youtube flag set)")
-    else:
-        header("② YouTube credentials (AstroFacts)")
-        results.append(check_env_present("YOUTUBE_CLIENT_ID_ASTRO"))
-        results.append(check_env_present("YOUTUBE_CLIENT_SECRET_ASTRO"))
-        results.append(check_env_present("YOUTUBE_REFRESH_TOKEN_ASTRO"))
-        results.append(check_youtube_token(
-            "YOUTUBE_CLIENT_ID_ASTRO",
-            "YOUTUBE_CLIENT_SECRET_ASTRO",
-            "YOUTUBE_REFRESH_TOKEN_ASTRO",
-        ))
-
-    if skip_tiktok:
-        warn("TikTok checks skipped (--skip-tiktok flag set)")
-    else:
-        header("③ TikTok credentials (AstroFacts)")
-        results.append(check_env_present("TIKTOK_CLIENT_KEY_ASTRO"))
-        results.append(check_env_present("TIKTOK_CLIENT_SECRET_ASTRO"))
-        results.append(check_env_present("TIKTOK_REFRESH_TOKEN_ASTRO"))
-        results.append(check_tiktok_token(
-            "TIKTOK_CLIENT_KEY_ASTRO",
-            "TIKTOK_CLIENT_SECRET_ASTRO",
-            "TIKTOK_REFRESH_TOKEN_ASTRO",
-        ))
+    results = run_groq_checks("GROQ_API_KEY_ASTRO", "AstroFacts")
+    results += run_youtube_checks(
+        "YOUTUBE_CLIENT_ID_ASTRO", "YOUTUBE_CLIENT_SECRET_ASTRO", "YOUTUBE_REFRESH_TOKEN_ASTRO",
+        label="AstroFacts", section="②", skip=skip_youtube,
+    )
+    results += run_tiktok_checks(
+        "TIKTOK_CLIENT_KEY_ASTRO", "TIKTOK_CLIENT_SECRET_ASTRO", "TIKTOK_REFRESH_TOKEN_ASTRO",
+        label="AstroFacts", section="③", skip=skip_tiktok,
+    )
     return results
 
 
@@ -211,12 +237,12 @@ def main():
     parser.add_argument(
         "--skip-tiktok",
         action="store_true",
-        help="Skip TikTok checks (use when tiktok.enabled=false in settings.yaml)",
+        help="Skip TikTok checks",
     )
     parser.add_argument(
         "--skip-youtube",
         action="store_true",
-        help="Skip YouTube checks (use when youtube.enabled=false in settings.yaml)",
+        help="Skip YouTube checks",
     )
     args = parser.parse_args()
 
@@ -225,21 +251,21 @@ def main():
     print(f"{'═'*55}")
 
     if args.channel == "factsunlocked":
-        results = check_factsunlocked(skip_youtube=args.skip_youtube)
+        results = check_factsunlocked(skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
     else:
         results = check_astrofacts(skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
 
     # ── Summary ──────────────────────────────────────────────────────────────
-    passed = sum(results)
     total  = len(results)
+    passed = sum(results)
     print(f"\n{'═'*55}")
     if all(results):
         print(f"  {GREEN}{BOLD}✔ All {total} checks passed — pipeline is clear to run.{RESET}")
         print(f"{'═'*55}\n")
         sys.exit(0)
     else:
-        failed = [i for i, r in enumerate(results) if not r]
-        print(f"  {RED}{BOLD}✘ {len(failed)} of {total} checks FAILED.{RESET}")
+        failed_count = total - passed
+        print(f"  {RED}{BOLD}✘ {failed_count} of {total} checks FAILED.{RESET}")
         print(f"  Fix the secrets above, then re-run the workflow.")
         print(f"{'═'*55}\n")
         sys.exit(1)
