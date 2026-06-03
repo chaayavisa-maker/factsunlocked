@@ -62,10 +62,10 @@ def check_groq_token(env_name: str) -> bool:
             return False
         else:
             warn(f"{env_name}: unexpected Groq response {resp.status_code} — treating as warning")
-            return True   # don't block on unexpected status
+            return True
     except Exception as e:
         warn(f"{env_name}: Groq connectivity check failed ({e}) — treating as warning")
-        return True   # network hiccup shouldn't abort the run
+        return True
 
 
 def check_youtube_token(client_id_env: str, client_secret_env: str, refresh_token_env: str) -> bool:
@@ -74,7 +74,6 @@ def check_youtube_token(client_id_env: str, client_secret_env: str, refresh_toke
     client_secret = os.environ.get(client_secret_env, "").strip()
     refresh_token = os.environ.get(refresh_token_env, "").strip()
 
-    # Presence already checked separately; here we actually test the token exchange
     if not all([client_id, client_secret, refresh_token]):
         fail("YouTube: cannot test token exchange — one or more credentials missing")
         return False
@@ -145,39 +144,45 @@ def check_tiktok_token(client_key_env: str, client_secret_env: str, refresh_toke
 
 # ── Channel check suites ──────────────────────────────────────────────────────
 
-def check_factsunlocked() -> list[bool]:
+def check_factsunlocked(skip_youtube: bool = False) -> list[bool]:
     results = []
     header("① Groq API key (FactsUnlocked)")
     results.append(check_env_present("GROQ_API_KEY"))
     results.append(check_groq_token("GROQ_API_KEY"))
 
-    header("② YouTube credentials (FactsUnlocked)")
-    results.append(check_env_present("YOUTUBE_CLIENT_ID"))
-    results.append(check_env_present("YOUTUBE_CLIENT_SECRET"))
-    results.append(check_env_present("YOUTUBE_REFRESH_TOKEN"))
-    results.append(check_youtube_token(
-        "YOUTUBE_CLIENT_ID",
-        "YOUTUBE_CLIENT_SECRET",
-        "YOUTUBE_REFRESH_TOKEN",
-    ))
+    if skip_youtube:
+        warn("YouTube checks skipped (--skip-youtube flag set)")
+    else:
+        header("② YouTube credentials (FactsUnlocked)")
+        results.append(check_env_present("YOUTUBE_CLIENT_ID"))
+        results.append(check_env_present("YOUTUBE_CLIENT_SECRET"))
+        results.append(check_env_present("YOUTUBE_REFRESH_TOKEN"))
+        results.append(check_youtube_token(
+            "YOUTUBE_CLIENT_ID",
+            "YOUTUBE_CLIENT_SECRET",
+            "YOUTUBE_REFRESH_TOKEN",
+        ))
     return results
 
 
-def check_astrofacts(skip_tiktok: bool = False) -> list[bool]:
+def check_astrofacts(skip_youtube: bool = False, skip_tiktok: bool = False) -> list[bool]:
     results = []
     header("① Groq API key (AstroFacts)")
     results.append(check_env_present("GROQ_API_KEY_ASTRO"))
     results.append(check_groq_token("GROQ_API_KEY_ASTRO"))
 
-    header("② YouTube credentials (AstroFacts)")
-    results.append(check_env_present("YOUTUBE_CLIENT_ID_ASTRO"))
-    results.append(check_env_present("YOUTUBE_CLIENT_SECRET_ASTRO"))
-    results.append(check_env_present("YOUTUBE_REFRESH_TOKEN_ASTRO"))
-    results.append(check_youtube_token(
-        "YOUTUBE_CLIENT_ID_ASTRO",
-        "YOUTUBE_CLIENT_SECRET_ASTRO",
-        "YOUTUBE_REFRESH_TOKEN_ASTRO",
-    ))
+    if skip_youtube:
+        warn("YouTube checks skipped (--skip-youtube flag set)")
+    else:
+        header("② YouTube credentials (AstroFacts)")
+        results.append(check_env_present("YOUTUBE_CLIENT_ID_ASTRO"))
+        results.append(check_env_present("YOUTUBE_CLIENT_SECRET_ASTRO"))
+        results.append(check_env_present("YOUTUBE_REFRESH_TOKEN_ASTRO"))
+        results.append(check_youtube_token(
+            "YOUTUBE_CLIENT_ID_ASTRO",
+            "YOUTUBE_CLIENT_SECRET_ASTRO",
+            "YOUTUBE_REFRESH_TOKEN_ASTRO",
+        ))
 
     if skip_tiktok:
         warn("TikTok checks skipped (--skip-tiktok flag set)")
@@ -208,6 +213,11 @@ def main():
         action="store_true",
         help="Skip TikTok checks (use when tiktok.enabled=false in settings.yaml)",
     )
+    parser.add_argument(
+        "--skip-youtube",
+        action="store_true",
+        help="Skip YouTube checks (use when youtube.enabled=false in settings.yaml)",
+    )
     args = parser.parse_args()
 
     print(f"\n{'═'*55}")
@@ -215,9 +225,9 @@ def main():
     print(f"{'═'*55}")
 
     if args.channel == "factsunlocked":
-        results = check_factsunlocked()
+        results = check_factsunlocked(skip_youtube=args.skip_youtube)
     else:
-        results = check_astrofacts(skip_tiktok=args.skip_tiktok)
+        results = check_astrofacts(skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
 
     # ── Summary ──────────────────────────────────────────────────────────────
     passed = sum(results)
