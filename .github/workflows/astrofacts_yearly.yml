@@ -124,7 +124,7 @@ jobs:
         id: meta
         run: |
           if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            MANIFEST=$(find workspace -name "manifest_yearly_*.json" | sort | tail -1)
+            MANIFEST=$(find workspace -name "manifest*.json" | sort | tail -1)
           else
             MANIFEST="${{ needs.generate.outputs.manifest_path }}"
           fi
