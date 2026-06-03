@@ -201,11 +201,32 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Resolve artifact run-id
+        id: artifact_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_NAME: ${{ needs.resolve_artifact.outputs.artifact_name }}
+        run: |
+          RUN_ID=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            --jq --arg name "$ARTIFACT_NAME" \
+            '[.artifacts[] | select(.name == $name) | select(.expired == false)]
+             | sort_by(.created_at) | last | .workflow_run.id')
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
+            exit 1
+          fi
+
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.resolve_artifact.outputs.artifact_name }}
           path: workspace/
+          run-id: ${{ steps.artifact_run.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify workspace contents
         run: |
