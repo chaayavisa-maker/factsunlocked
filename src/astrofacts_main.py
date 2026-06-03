@@ -7,6 +7,10 @@ Modes:
   --publish-only <manifest_path> — publish from a previous generate run
   --sign <Sign>                  — single sign only (generate only, unless --dev)
   --dev --sign <Sign>            — generate + publish a single sign locally
+
+Platform flags (can be combined):
+  --skip-youtube                 — skip YouTube publishing
+  --skip-tiktok                  — skip TikTok publishing
 """
 
 import argparse
@@ -152,7 +156,7 @@ async def generate_all_signs(period: str) -> list[dict]:
 
 # ── PUBLISH ──────────────────────────────────────────────────────────────────
 
-def publish_sign(metadata: dict) -> dict:
+def publish_sign(metadata: dict, skip_youtube: bool = False, skip_tiktok: bool = False) -> dict:
     """Upload one sign's video to YouTube and/or TikTok."""
     sign       = metadata["sign"]
     period     = metadata["period"]
@@ -160,6 +164,7 @@ def publish_sign(metadata: dict) -> dict:
 
     logger.info("=" * 60)
     logger.info(f"  PUBLISH | {SIGN_SYMBOLS.get(sign,'✨')} {sign} | {period.upper()}")
+    logger.info(f"  YouTube: {'SKIP' if skip_youtube else 'enabled'} | TikTok: {'SKIP' if skip_tiktok else 'enabled'}")
     logger.info("=" * 60)
 
     if not video_path.exists():
@@ -170,7 +175,8 @@ def publish_sign(metadata: dict) -> dict:
 
     platform_ids = {}
 
-    if YT_CFG.get("enabled"):
+    # ── YouTube ──────────────────────────────────────────────────────────────
+    if YT_CFG.get("enabled") and not skip_youtube:
         playlist_id = YT_CFG.get("playlist_ids", {}).get(period)
         yt_id = upload_video(
             video_path=video_path,
@@ -187,8 +193,11 @@ def publish_sign(metadata: dict) -> dict:
         )
         platform_ids["youtube"] = yt_id
         logger.info(f"YouTube ✅ https://youtube.com/shorts/{yt_id}")
+    elif skip_youtube:
+        logger.info("YouTube ⏭️  skipped")
 
-    if TIKTOK_CFG.get("enabled"):
+    # ── TikTok ───────────────────────────────────────────────────────────────
+    if TIKTOK_CFG.get("enabled") and not skip_tiktok:
         from src.platforms.tiktok import upload_video_tiktok
         tt_id = upload_video_tiktok(
             video_path=video_path,
@@ -197,17 +206,25 @@ def publish_sign(metadata: dict) -> dict:
         )
         platform_ids["tiktok"] = tt_id
         logger.info(f"TikTok ✅ publish_id={tt_id}")
+    elif skip_tiktok:
+        logger.info("TikTok ⏭️  skipped")
 
     logger.info(f"✅ Published {sign} {period}: {platform_ids}")
     return {**metadata, "platform_ids": platform_ids}
 
 
-def publish_from_manifest(manifest_path: Path, sign: str = None) -> None:
+def publish_from_manifest(
+    manifest_path: Path,
+    sign: str = None,
+    skip_youtube: bool = False,
+    skip_tiktok: bool = False,
+) -> None:
     manifest = json.loads(manifest_path.read_text())
     period   = manifest["period"]
     run_ids  = manifest["runs"]
 
     logger.info(f"🚀 PUBLISH — {period.upper()} from manifest ({len(run_ids)} runs)")
+    logger.info(f"   YouTube: {'SKIP' if skip_youtube else 'enabled'} | TikTok: {'SKIP' if skip_tiktok else 'enabled'}")
     errors = []
 
     for run_id in run_ids:
@@ -220,7 +237,7 @@ def publish_from_manifest(manifest_path: Path, sign: str = None) -> None:
         if sign and metadata.get("sign", "").lower() != sign.lower():
             continue
         try:
-            publish_sign(metadata)
+            publish_sign(metadata, skip_youtube=skip_youtube, skip_tiktok=skip_tiktok)
         except Exception as e:
             logger.error(f"❌ Publish failed for {run_id}: {e}", exc_info=True)
             errors.append(run_id)
@@ -238,20 +255,29 @@ def main():
     parser.add_argument("--sign",   choices=ZODIAC_SIGNS + [s.lower() for s in ZODIAC_SIGNS], default=None)
     parser.add_argument("--publish-only", metavar="MANIFEST_PATH", nargs="?", const=None, default=None)
     parser.add_argument("--dev", action="store_true", help="Generate + publish (local dev)")
+    parser.add_argument("--skip-youtube", action="store_true", help="Skip YouTube publishing")
+    parser.add_argument("--skip-tiktok",  action="store_true", help="Skip TikTok publishing")
     args = parser.parse_args()
 
     if hasattr(args, 'publish_only') and args.publish_only is not None and not args.publish_only.strip():
         args.publish_only = None
 
-    period = args.period
-    sign   = args.sign.title() if args.sign else None
+    period       = args.period
+    sign         = args.sign.title() if args.sign else None
+    skip_youtube = args.skip_youtube
+    skip_tiktok  = args.skip_tiktok
 
     if args.publish_only:
-        publish_from_manifest(Path(args.publish_only), sign=sign)
+        publish_from_manifest(
+            Path(args.publish_only),
+            sign=sign,
+            skip_youtube=skip_youtube,
+            skip_tiktok=skip_tiktok,
+        )
 
     elif args.dev and sign:
         metadata = asyncio.run(generate_sign(sign, period))
-        publish_sign(metadata)
+        publish_sign(metadata, skip_youtube=skip_youtube, skip_tiktok=skip_tiktok)
 
     elif sign:
         metadata = asyncio.run(generate_sign(sign, period))
