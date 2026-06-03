@@ -98,6 +98,8 @@ jobs:
             exit 1
           fi
           RUN_ID=$(python -c "import json; print(json.load(open('$META'))['run_id'])")
+          RUN_ID="${RUN_ID//[[:space:]]/}"  # strip any whitespace
+          RUN_ID="${RUN_ID%/}"              # strip any trailing slash
           echo "artifact_name=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "✅ Artifact : $RUN_ID"
 
@@ -137,6 +139,7 @@ jobs:
 
           # ── normal flow: use what the generate job told us ─────────────────
           ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
+          ARTIFACT="${ARTIFACT%/}"  # defensive: strip any trailing slash
           if [ -n "$ARTIFACT" ]; then
             echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
             echo "✅ normal flow → $ARTIFACT"
