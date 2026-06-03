@@ -1,10 +1,8 @@
 name: AstroFacts – Daily Horoscopes (12 Signs)
-permissions:
-  actions: read
-  contents: read
+
 on:
   schedule:
-    - cron: "0 1 * * *"          # every day at 06:00 UTC
+    - cron: "0 6 * * *"          # every day at 06:00 UTC
   workflow_dispatch:
     inputs:
       sign:
@@ -14,8 +12,7 @@ on:
       publish_only:
         description: |
           Re-publish without regenerating.
-          Paste the artifact NAME from a previous run
-          (e.g. astrofacts-daily-2026-06-01).
+          Paste the artifact name (e.g. astrofacts-daily-2026-06-01).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -29,9 +26,9 @@ on:
         default: "false"
 
 jobs:
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   # JOB 1 – Preflight
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   preflight:
     name: "🔍 Preflight checks"
     runs-on: ubuntu-latest
@@ -47,33 +44,29 @@ jobs:
 
       - name: Check all credentials
         env:
-          GROQ_API_KEY_ASTRO:            ${{ secrets.GROQ_API_KEY_ASTRO }}
-          YOUTUBE_CLIENT_ID_ASTRO:       ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
-          YOUTUBE_CLIENT_SECRET_ASTRO:   ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
-          YOUTUBE_REFRESH_TOKEN_ASTRO:   ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
-          TIKTOK_CLIENT_KEY_ASTRO:       ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
-          TIKTOK_CLIENT_SECRET_ASTRO:    ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
-          TIKTOK_REFRESH_TOKEN_ASTRO:    ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+          GROQ_API_KEY_ASTRO:          ${{ secrets.GROQ_API_KEY_ASTRO }}
+          YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
+          YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
+          YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+          TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
+          TIKTOK_CLIENT_SECRET_ASTRO:  ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
+          TIKTOK_REFRESH_TOKEN_ASTRO:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
         run: |
-          SKIP_FLAGS=""
-          if [ "${{ github.event.inputs.skip_youtube }}" = "true" ]; then
-            SKIP_FLAGS="$SKIP_FLAGS --skip-youtube"
-          fi
-          if [ "${{ github.event.inputs.skip_tiktok }}" = "true" ]; then
-            SKIP_FLAGS="$SKIP_FLAGS --skip-tiktok"
-          fi
-          python scripts/preflight_check.py --channel astrofacts $SKIP_FLAGS
+          FLAGS=""
+          [ "${{ github.event.inputs.skip_youtube }}" = "true" ] && FLAGS="$FLAGS --skip-youtube"
+          [ "${{ github.event.inputs.skip_tiktok }}"  = "true" ] && FLAGS="$FLAGS --skip-tiktok"
+          python scripts/preflight_check.py --channel astrofacts $FLAGS
 
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   # JOB 2 – Generate (12 signs → 12 video files + manifest)
-  # Skipped when publish_only is set.
-  # ────────────────────────────────────────────────────────────
+  # Skipped entirely when publish_only is set.
+  # ──────────────────────────────────────────────────────────
   generate:
     name: "🎬 Generate videos"
     needs: preflight
     if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
     runs-on: ubuntu-latest
-    timeout-minutes: 400
+    timeout-minutes: 110
     outputs:
       manifest_path: ${{ steps.run.outputs.manifest_path }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
@@ -100,28 +93,14 @@ jobs:
           PYTHONPATH:         ${{ github.workspace }}
         run: |
           SIGN_ARG=""
-          if [ -n "${{ github.event.inputs.sign }}" ]; then
-            SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
-          fi
-
+          [ -n "${{ github.event.inputs.sign }}" ] && SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           python src/astrofacts_main.py --period daily $SIGN_ARG
 
           MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
-          if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest_daily_*.json found in workspace/ after generation."
-            exit 1
-          fi
-
-          DATE=$(echo "$MANIFEST" | grep -oP '\d{4}-\d{2}-\d{2}')
-          if [ -z "$DATE" ]; then
-            DATE=$(date -u +%Y-%m-%d)
-          fi
-          ARTIFACT="astrofacts-daily-${DATE}"
-
+          ARTIFACT="astrofacts-daily-$(date +%Y-%m-%d)"
           echo "manifest_path=$MANIFEST" >> "$GITHUB_OUTPUT"
           echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
-          echo "✅ Manifest : $MANIFEST"
-          echo "✅ Artifact : $ARTIFACT"
+          echo "Manifest: $MANIFEST"
 
       - name: Upload workspace artifact
         uses: actions/upload-artifact@v4
@@ -130,69 +109,17 @@ jobs:
           path: workspace/
           retention-days: 3
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 3 – Resolve which artifact to publish
-  # ────────────────────────────────────────────────────────────
-  resolve_artifact:
-    name: "🔎 Resolve artifact name"
+  # ──────────────────────────────────────────────────────────
+  # JOB 3a – Publish to YouTube
+  # Re-run independently: set publish_only=<artifact> + skip_tiktok=true
+  # ──────────────────────────────────────────────────────────
+  publish-youtube:
+    name: "▶️ Publish to YouTube"
     needs: [preflight, generate]
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      (needs.generate.result == 'success' || needs.generate.result == 'skipped')
-    runs-on: ubuntu-latest
-    outputs:
-      artifact_name: ${{ steps.pick.outputs.artifact_name }}
-
-    steps:
-      - name: Pick artifact name
-        id: pick
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # ── publish-only: user supplied a name explicitly ──────────────────
-          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            # Normalize underscores to hyphens in case of typo
-            NORMALIZED=$(echo "${{ github.event.inputs.publish_only }}" | tr '_' '-')
-            echo "artifact_name=$NORMALIZED" >> "$GITHUB_OUTPUT"
-            echo "✅ publish-only mode → $NORMALIZED"
-            exit 0
-          fi
-
-          # ── normal flow: use what the generate job told us ─────────────────
-          ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
-          if [ -n "$ARTIFACT" ]; then
-            echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
-            echo "✅ normal flow → $ARTIFACT"
-            exit 0
-          fi
-
-          # ── last-resort fallback ───────────────────────────────────────────
-          echo "⚠️  generate output empty – querying API for latest astrofacts-daily-* artifact…"
-          LATEST=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name | startswith("astrofacts-daily-")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
-
-          echo "🔍 API returned: '$LATEST'"
-
-          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-            echo "❌ No unexpired astrofacts-daily-* artifact found in this repo."
-            exit 1
-          fi
-
-          echo "artifact_name=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "✅ fallback  → $LATEST"
-
-  # ────────────────────────────────────────────────────────────
-  # JOB 4 – Publish to YouTube
-  # ────────────────────────────────────────────────────────────
-  publish_youtube:
-    name: "▶️ Publish to YouTube"
-    needs: [preflight, resolve_artifact]
-    if: |
-      always() &&
-      needs.preflight.result == 'success' &&
-      needs.resolve_artifact.result == 'success' &&
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped') &&
       github.event.inputs.skip_youtube != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -207,40 +134,34 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Resolve artifact run-id
-        id: artifact_run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARTIFACT_NAME: ${{ needs.resolve_artifact.outputs.artifact_name }}
-        run: |
-          RUN_ID=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name == "'"$ARTIFACT_NAME"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
-
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
-            exit 1
-          fi
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Download artifact
+      - name: Download artifact (normal flow)
+        if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.resolve_artifact.outputs.artifact_name }}
+          name: ${{ needs.generate.outputs.artifact_name }}
           path: workspace/
-          run-id: ${{ steps.artifact_run.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifact (publish-only re-run)
+        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.publish_only }}
+          path: workspace/
 
       - name: Resolve manifest path
         id: meta
         run: |
-          MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
+          # Try the generate-job output first, then fall back to scanning disk
+          # (the output var is always empty on a different runner)
+          MANIFEST="${{ needs.generate.outputs.manifest_path }}"
+          if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
+            MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
+          fi
           if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest found – aborting."
-            exit 1
+            echo "❌ No manifest found in workspace/" && exit 1
           fi
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
-          echo "✅ Resolved manifest: $MANIFEST"
+          echo "Resolved manifest: $MANIFEST"
 
       - name: Publish to YouTube
         env:
@@ -250,26 +171,24 @@ jobs:
           PYTHONPATH:                  ${{ github.workspace }}
         run: |
           SIGN_ARG=""
-          if [ -n "${{ github.event.inputs.sign }}" ]; then
-            SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
-          fi
-
+          [ -n "${{ github.event.inputs.sign }}" ] && SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           python src/astrofacts_main.py \
             --period daily \
             --publish-only "${{ steps.meta.outputs.manifest }}" \
             --skip-tiktok \
             $SIGN_ARG
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 5 – Publish to TikTok
-  # ────────────────────────────────────────────────────────────
-  publish_tiktok:
+  # ──────────────────────────────────────────────────────────
+  # JOB 3b – Publish to TikTok
+  # Re-run independently: set publish_only=<artifact> + skip_youtube=true
+  # ──────────────────────────────────────────────────────────
+  publish-tiktok:
     name: "🎵 Publish to TikTok"
-    needs: [preflight, resolve_artifact]
+    needs: [preflight, generate]
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.resolve_artifact.result == 'success' &&
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped') &&
       github.event.inputs.skip_tiktok != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -284,53 +203,42 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Resolve artifact run-id
-        id: artifact_run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARTIFACT_NAME: ${{ needs.resolve_artifact.outputs.artifact_name }}
-        run: |
-          RUN_ID=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name == "'"$ARTIFACT_NAME"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
-
-          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
-            exit 1
-          fi
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Download artifact
+      - name: Download artifact (normal flow)
+        if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.resolve_artifact.outputs.artifact_name }}
+          name: ${{ needs.generate.outputs.artifact_name }}
           path: workspace/
-          run-id: ${{ steps.artifact_run.outputs.run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifact (publish-only re-run)
+        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.publish_only }}
+          path: workspace/
 
       - name: Resolve manifest path
         id: meta
         run: |
-          MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
+          MANIFEST="${{ needs.generate.outputs.manifest_path }}"
+          if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
+            MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
+          fi
           if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest found – aborting."
-            exit 1
+            echo "❌ No manifest found in workspace/" && exit 1
           fi
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
-          echo "✅ Resolved manifest: $MANIFEST"
+          echo "Resolved manifest: $MANIFEST"
 
       - name: Publish to TikTok
         env:
-          TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
-          TIKTOK_CLIENT_SECRET_ASTRO:  ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
-          TIKTOK_REFRESH_TOKEN_ASTRO:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
-          PYTHONPATH:                  ${{ github.workspace }}
+          TIKTOK_CLIENT_KEY_ASTRO:    ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
+          TIKTOK_CLIENT_SECRET_ASTRO: ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
+          TIKTOK_REFRESH_TOKEN_ASTRO: ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+          PYTHONPATH:                 ${{ github.workspace }}
         run: |
           SIGN_ARG=""
-          if [ -n "${{ github.event.inputs.sign }}" ]; then
-            SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
-          fi
-
+          [ -n "${{ github.event.inputs.sign }}" ] && SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           python src/astrofacts_main.py \
             --period daily \
             --publish-only "${{ steps.meta.outputs.manifest }}" \
