@@ -30,7 +30,6 @@ def _refresh_access_token(
     client_secret_env: str = "TIKTOK_CLIENT_SECRET_ASTRO",
     refresh_token_env: str = "TIKTOK_REFRESH_TOKEN_ASTRO",
 ) -> str:
-    """Exchange refresh token for a new access token."""
     payload = {
         "client_key": os.environ[client_key_env],
         "client_secret": os.environ[client_secret_env],
@@ -39,6 +38,8 @@ def _refresh_access_token(
     }
     with httpx.Client(timeout=30) as client:
         resp = client.post(TIKTOK_TOKEN_URL, data=payload)
+        logger.info(f"Token refresh status: {resp.status_code}")
+        logger.info(f"Token refresh response: {resp.text}")
         resp.raise_for_status()
     data = resp.json()
     token_data = data.get("data") or data
