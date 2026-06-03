@@ -52,7 +52,7 @@ def upload_video_tiktok(
     title: str,
     description: str = "",
     max_duration_seconds: int = 60,
-    privacy_level: str = "PUBLIC_TO_EVERYONE",
+    privacy_level: str = "SELF_ONLY",
     disable_comment: bool = False,
     disable_duet: bool = False,
     disable_stitch: bool = False,
