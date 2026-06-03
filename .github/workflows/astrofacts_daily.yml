@@ -1,5 +1,7 @@
 name: AstroFacts – Daily Horoscopes (12 Signs)
-
+permissions:
+  actions: read
+  contents: read
 on:
   schedule:
     - cron: "0 1 * * *"          # every day at 06:00 UTC
