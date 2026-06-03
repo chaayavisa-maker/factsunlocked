@@ -8,16 +8,23 @@ on:
       publish_only:
         description: |
           Re-publish a previous run without regenerating.
-          Paste the GitHub Actions numeric run ID (found in the URL of the
-          original workflow run, e.g. 15234567890).
+          Paste the run_id (e.g. factsunlocked_2026-06-01_abc123).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
+      skip_youtube:
+        description: "Skip YouTube upload for this run (true/false)"
+        required: false
+        default: "false"
+      skip_tiktok:
+        description: "Skip TikTok upload for this run (true/false)"
+        required: false
+        default: "false"
 
 jobs:
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   # JOB 1 – Preflight: validate every secret before burning compute
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   preflight:
     name: "🔍 Preflight checks"
     runs-on: ubuntu-latest
@@ -33,19 +40,23 @@ jobs:
 
       - name: Check all credentials
         env:
-          GROQ_API_KEY:                  ${{ secrets.GROQ_API_KEY }}
-          YOUTUBE_CLIENT_ID:             ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET:         ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN:         ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          TIKTOK_CLIENT_KEY_ASTRO:       ${{ secrets.TIKTOK_CLIENT_KEY }}
-          TIKTOK_CLIENT_SECRET_ASTRO:    ${{ secrets.TIKTOK_CLIENT_SECRET }}
-          TIKTOK_REFRESH_TOKEN_ASTRO:    ${{ secrets.TIKTOK_REFRESH_TOKEN }}
-        run: python scripts/preflight_check.py --channel factsunlocked
+          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+          YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          TIKTOK_CLIENT_KEY:     ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET:  ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+        run: |
+          FLAGS=""
+          [ "${{ github.event.inputs.skip_youtube }}" = "true" ] && FLAGS="$FLAGS --skip-youtube"
+          [ "${{ github.event.inputs.skip_tiktok }}"  = "true" ] && FLAGS="$FLAGS --skip-tiktok"
+          python scripts/preflight_check.py --channel factsunlocked $FLAGS
 
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   # JOB 2 – Generate: Groq → images → TTS → render
   # Skipped entirely when publish_only is set.
-  # ────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────
   generate:
     name: "🎬 Generate video"
     needs: preflight
@@ -53,8 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
-      metadata_path: ${{ steps.run.outputs.metadata_path }}
-      run_id:        ${{ steps.run.outputs.run_id }}
+      run_id: ${{ steps.run.outputs.run_id }}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,21 +84,13 @@ jobs:
       - name: Generate video
         id: run
         env:
-          GROQ_API_KEY:           ${{ secrets.GROQ_API_KEY }}
-          YOUTUBE_CLIENT_ID:      ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET:  ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN:  ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          TIKTOK_CLIENT_KEY:      ${{ secrets.TIKTOK_CLIENT_KEY }}
-          TIKTOK_CLIENT_SECRET:   ${{ secrets.TIKTOK_CLIENT_SECRET }}
-          TIKTOK_REFRESH_TOKEN:   ${{ secrets.TIKTOK_REFRESH_TOKEN }}
-          PYTHONPATH:             ${{ github.workspace }}:${{ github.workspace }}/src
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PYTHONPATH:   ${{ github.workspace }}:${{ github.workspace }}/src
         run: |
           python src/main.py
-          # Find the metadata.json that was just written
           META=$(find workspace -name "metadata.json" | sort | tail -1)
           RUN_ID=$(python -c "import json; print(json.load(open('$META'))['run_id'])")
-          echo "metadata_path=$META"  >> "$GITHUB_OUTPUT"
-          echo "run_id=$RUN_ID"       >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "Metadata: $META  |  run_id: $RUN_ID"
 
       - name: Upload video artifact
@@ -98,22 +100,20 @@ jobs:
           path: workspace/${{ steps.run.outputs.run_id }}/
           retention-days: 3
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 3 – Publish: upload to YouTube
-  # Can be re-run independently by passing publish_only=<github_run_id>
-  # ────────────────────────────────────────────────────────────
-  publish:
-    name: "📤 Publish to YouTube"
+  # ──────────────────────────────────────────────────────────
+  # JOB 3a – Publish to YouTube
+  # Re-run independently: set publish_only=<run_id> + skip_tiktok=true
+  # ──────────────────────────────────────────────────────────
+  publish-youtube:
+    name: "▶️ Publish to YouTube"
     needs: [preflight, generate]
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      (needs.generate.result == 'success' || needs.generate.result == 'skipped')
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped') &&
+      github.event.inputs.skip_youtube != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      actions: read      # ← allows downloading artifacts from other runs
-      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -125,7 +125,6 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # Normal flow: download artifact produced by the generate job (same run)
       - name: Download artifact (normal flow)
         if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
         uses: actions/download-artifact@v4
@@ -133,31 +132,23 @@ jobs:
           name: ${{ needs.generate.outputs.run_id }}
           path: workspace/${{ needs.generate.outputs.run_id }}/
 
-      # Re-run flow: download all artifacts from a previous workflow run by its numeric GitHub run ID
       - name: Download artifact (publish-only re-run)
         if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
         uses: actions/download-artifact@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.inputs.publish_only }}
-          path: workspace/
-
-      - name: Debug downloaded files
-        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
-        run: |
-          echo "=== Root ==="
-          ls -la
-          echo "=== All files downloaded ==="
-          find . -not -path './.git/*' -not -path './.github/*' | sort
+          name: ${{ github.event.inputs.publish_only }}
+          path: workspace/${{ github.event.inputs.publish_only }}/
 
       - name: Resolve metadata path
         id: meta
         run: |
-          META=$(find . -name "metadata.json" | sort | tail -1)
-          if [ -z "$META" ]; then
-            echo "ERROR: No metadata.json found"
-            ls -la
-            exit 1
+          RUN_ID="${{ github.event.inputs.publish_only || needs.generate.outputs.run_id }}"
+          META="workspace/${RUN_ID}/metadata.json"
+          if [ ! -f "$META" ]; then
+            META=$(find workspace -name "metadata.json" | sort | tail -1)
+          fi
+          if [ -z "$META" ] || [ ! -f "$META" ]; then
+            echo "❌ metadata.json not found in workspace/" && exit 1
           fi
           echo "path=$META" >> "$GITHUB_OUTPUT"
           echo "Resolved metadata: $META"
@@ -167,8 +158,66 @@ jobs:
           YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          PYTHONPATH:            ${{ github.workspace }}:${{ github.workspace }}/src
+        run: python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-tiktok
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 3b – Publish to TikTok
+  # Re-run independently: set publish_only=<run_id> + skip_youtube=true
+  # ──────────────────────────────────────────────────────────
+  publish-tiktok:
+    name: "🎵 Publish to TikTok"
+    needs: [preflight, generate]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped') &&
+      github.event.inputs.skip_tiktok != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download artifact (normal flow)
+        if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.generate.outputs.run_id }}
+          path: workspace/${{ needs.generate.outputs.run_id }}/
+
+      - name: Download artifact (publish-only re-run)
+        if: ${{ github.event.inputs.publish_only != '' && github.event.inputs.publish_only != null }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.publish_only }}
+          path: workspace/${{ github.event.inputs.publish_only }}/
+
+      - name: Resolve metadata path
+        id: meta
+        run: |
+          RUN_ID="${{ github.event.inputs.publish_only || needs.generate.outputs.run_id }}"
+          META="workspace/${RUN_ID}/metadata.json"
+          if [ ! -f "$META" ]; then
+            META=$(find workspace -name "metadata.json" | sort | tail -1)
+          fi
+          if [ -z "$META" ] || [ ! -f "$META" ]; then
+            echo "❌ metadata.json not found in workspace/" && exit 1
+          fi
+          echo "path=$META" >> "$GITHUB_OUTPUT"
+          echo "Resolved metadata: $META"
+
+      - name: Publish to TikTok
+        env:
           TIKTOK_CLIENT_KEY:     ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET:  ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           PYTHONPATH:            ${{ github.workspace }}:${{ github.workspace }}/src
-        run: python src/main.py --publish-only ${{ steps.meta.outputs.path }}
+        run: python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-youtube
