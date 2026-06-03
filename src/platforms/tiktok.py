@@ -44,7 +44,7 @@ def _refresh_access_token(
     token_data = data.get("data") or data
     if "access_token" not in token_data:
         raise RuntimeError(f"TikTok token refresh failed: {data}")
-    return data["data"]["access_token"]
+    return data["access_token"]
 
 
 def upload_video_tiktok(
