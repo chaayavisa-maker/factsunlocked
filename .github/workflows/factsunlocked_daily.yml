@@ -1,7 +1,9 @@
 name: FactsUnlocked – Daily Video
+
 permissions:
   actions: read
   contents: read
+
 on:
   schedule:
     - cron: "0 9 * * *"          # every day at 09:00 UTC
@@ -9,9 +11,9 @@ on:
     inputs:
       publish_only:
         description: |
-          Re-publish without regenerating.
+          Re-publish a previous run without regenerating.
           Paste the artifact NAME from a previous run
-          (e.g. factsunlocked_2026-06-01_abc123).
+          (e.g. factsunlocked-daily-2026-06-01).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -51,10 +53,14 @@ jobs:
           TIKTOK_CLIENT_SECRET:  ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
         run: |
-          FLAGS=""
-          [ "${{ github.event.inputs.skip_youtube }}" = "true" ] && FLAGS="$FLAGS --skip-youtube"
-          [ "${{ github.event.inputs.skip_tiktok }}"  = "true" ] && FLAGS="$FLAGS --skip-tiktok"
-          python scripts/preflight_check.py --channel factsunlocked $FLAGS
+          SKIP_FLAGS=""
+          if [ "${{ github.event.inputs.skip_youtube }}" = "true" ]; then
+            SKIP_FLAGS="$SKIP_FLAGS --skip-youtube"
+          fi
+          if [ "${{ github.event.inputs.skip_tiktok }}" = "true" ]; then
+            SKIP_FLAGS="$SKIP_FLAGS --skip-tiktok"
+          fi
+          python scripts/preflight_check.py --channel factsunlocked $SKIP_FLAGS
 
   # ──────────────────────────────────────────────────────────
   # JOB 2 – Generate: Groq → images → TTS → render
@@ -97,17 +103,22 @@ jobs:
             echo "❌ No metadata.json found in workspace/ after generation."
             exit 1
           fi
-          RUN_ID=$(python -c "import json; print(json.load(open('$META'))['run_id'])")
-          RUN_ID="${RUN_ID//[[:space:]]/}"  # strip any whitespace
-          RUN_ID="${RUN_ID%/}"              # strip any trailing slash
-          echo "artifact_name=$RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "✅ Artifact : $RUN_ID"
+
+          DATE=$(python -c "import json,sys; d=json.load(open('$META')); print(d.get('date', ''))" 2>/dev/null || true)
+          if [ -z "$DATE" ]; then
+            DATE=$(date -u +%Y-%m-%d)
+          fi
+          ARTIFACT="factsunlocked-daily-${DATE}"
+
+          echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "✅ Metadata : $META"
+          echo "✅ Artifact : $ARTIFACT"
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.run.outputs.artifact_name }}
-          path: workspace/${{ steps.run.outputs.artifact_name }}/
+          path: workspace/
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────
@@ -132,14 +143,14 @@ jobs:
         run: |
           # ── publish-only: user supplied a name explicitly ──────────────────
           if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            echo "artifact_name=${{ github.event.inputs.publish_only }}" >> "$GITHUB_OUTPUT"
-            echo "✅ publish-only mode → ${{ github.event.inputs.publish_only }}"
+            NORMALIZED=$(echo "${{ github.event.inputs.publish_only }}" | tr '_' '-')
+            echo "artifact_name=$NORMALIZED" >> "$GITHUB_OUTPUT"
+            echo "✅ publish-only mode → $NORMALIZED"
             exit 0
           fi
 
           # ── normal flow: use what the generate job told us ─────────────────
           ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
-          ARTIFACT="${ARTIFACT%/}"  # defensive: strip any trailing slash
           if [ -n "$ARTIFACT" ]; then
             echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
             echo "✅ normal flow → $ARTIFACT"
@@ -147,24 +158,24 @@ jobs:
           fi
 
           # ── last-resort fallback ───────────────────────────────────────────
-          echo "⚠️  generate output empty – querying API for latest factsunlocked_* artifact…"
+          echo "⚠️  generate output empty – querying API for latest factsunlocked-daily-* artifact…"
           LATEST=$(gh api \
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name | startswith("factsunlocked_")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
+            --jq '[.artifacts[] | select(.name | startswith("factsunlocked-daily-")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
 
           echo "🔍 API returned: '$LATEST'"
 
           if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-            echo "❌ No unexpired factsunlocked_* artifact found in this repo."
+            echo "❌ No unexpired factsunlocked-daily-* artifact found in this repo."
             exit 1
           fi
 
           echo "artifact_name=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "✅ fallback  → $LATEST"
+          echo "✅ fallback → $LATEST"
 
   # ──────────────────────────────────────────────────────────
-  # JOB 4a – Publish to YouTube
-  # Re-run independently: set publish_only=<artifact_name> + skip_tiktok=true
+  # JOB 4 – Publish to YouTube
+  # Re-run independently: set publish_only=<artifact> + skip_tiktok=true
   # ──────────────────────────────────────────────────────────
   publish_youtube:
     name: "▶️ Publish to YouTube"
@@ -207,20 +218,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.resolve_artifact.outputs.artifact_name }}
-          path: workspace/${{ needs.resolve_artifact.outputs.artifact_name }}/
+          path: workspace/
           run-id: ${{ steps.artifact_run.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve metadata path
         id: meta
         run: |
-          ARTIFACT_NAME="${{ needs.resolve_artifact.outputs.artifact_name }}"
-          META="workspace/${ARTIFACT_NAME}/metadata.json"
-          if [ ! -f "$META" ]; then
-            META=$(find workspace -name "metadata.json" | sort | tail -1)
-          fi
-          if [ -z "$META" ] || [ ! -f "$META" ]; then
-            echo "❌ metadata.json not found in workspace/" && exit 1
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          if [ -z "$META" ]; then
+            echo "❌ No metadata.json found in workspace/ – aborting."
+            exit 1
           fi
           echo "path=$META" >> "$GITHUB_OUTPUT"
           echo "✅ Resolved metadata: $META"
@@ -231,11 +239,12 @@ jobs:
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           PYTHONPATH:            ${{ github.workspace }}:${{ github.workspace }}/src
-        run: python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-tiktok
+        run: |
+          python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-tiktok
 
   # ──────────────────────────────────────────────────────────
-  # JOB 4b – Publish to TikTok
-  # Re-run independently: set publish_only=<artifact_name> + skip_youtube=true
+  # JOB 5 – Publish to TikTok
+  # Re-run independently: set publish_only=<artifact> + skip_youtube=true
   # ──────────────────────────────────────────────────────────
   publish_tiktok:
     name: "🎵 Publish to TikTok"
@@ -278,20 +287,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ needs.resolve_artifact.outputs.artifact_name }}
-          path: workspace/${{ needs.resolve_artifact.outputs.artifact_name }}/
+          path: workspace/
           run-id: ${{ steps.artifact_run.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve metadata path
         id: meta
         run: |
-          ARTIFACT_NAME="${{ needs.resolve_artifact.outputs.artifact_name }}"
-          META="workspace/${ARTIFACT_NAME}/metadata.json"
-          if [ ! -f "$META" ]; then
-            META=$(find workspace -name "metadata.json" | sort | tail -1)
-          fi
-          if [ -z "$META" ] || [ ! -f "$META" ]; then
-            echo "❌ metadata.json not found in workspace/" && exit 1
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          if [ -z "$META" ]; then
+            echo "❌ No metadata.json found in workspace/ – aborting."
+            exit 1
           fi
           echo "path=$META" >> "$GITHUB_OUTPUT"
           echo "✅ Resolved metadata: $META"
@@ -302,4 +308,5 @@ jobs:
           TIKTOK_CLIENT_SECRET:  ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           PYTHONPATH:            ${{ github.workspace }}:${{ github.workspace }}/src
-        run: python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-youtube
+        run: |
+          python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-youtube
