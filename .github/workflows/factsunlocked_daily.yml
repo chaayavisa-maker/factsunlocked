@@ -1,5 +1,7 @@
 name: FactsUnlocked – Daily Video
-
+permissions:
+  actions: read
+  contents: read
 on:
   schedule:
     - cron: "0 9 * * *"          # every day at 09:00 UTC
