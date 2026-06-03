@@ -2,13 +2,15 @@ name: 🩺 Weekly Health Check
 
 on:
   schedule:
-    # Every Monday at 07:00 UTC — two hours before the daily video runs
-    - cron: "0 7 * * 1"
+    - cron: "0 5 * * 1"          # every Monday at 05:00 UTC (before all pipeline triggers)
   workflow_dispatch:
 
 jobs:
-  health-check:
-    name: Validate all credentials
+  # ──────────────────────────────────────────────────────────
+  # JOB 1 – FactsUnlocked credentials
+  # ──────────────────────────────────────────────────────────
+  check-factsunlocked:
+    name: "🔍 FactsUnlocked credentials"
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -18,36 +20,84 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
-      - name: Install deps
-        run: pip install -q requests edge-tts
+      - name: Install dependencies
+        run: pip install httpx
 
-      - name: Run validation
-        id: validate
+      - name: Validate FactsUnlocked credentials
+        id: check
         env:
           GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
           YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-          PYTHONPATH:            ${{ github.workspace }}/src
-        run: python scripts/validate_credentials.py
+          TIKTOK_CLIENT_KEY:     ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET:  ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+        run: python scripts/preflight_check.py --channel factsunlocked
 
-      - name: Write health summary
+      - name: Write summary
         if: always()
         run: |
-          if [ "${{ steps.validate.outcome }}" == "success" ]; then
-            echo "## ✅ Weekly health check passed" >> $GITHUB_STEP_SUMMARY
-            echo "All credentials and APIs are working." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            echo "## ✅ FactsUnlocked – all credentials valid" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "## ❌ Weekly health check FAILED" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Action required** — one or more credentials need renewal." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Most common cause: YouTube OAuth token expired." >> $GITHUB_STEP_SUMMARY
-            echo "**Fix:** Run \`python scripts/get_youtube_token.py\` locally" >> $GITHUB_STEP_SUMMARY
-            echo "and update the \`YOUTUBE_REFRESH_TOKEN\` secret." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-            echo "::error::Health check failed — credentials need renewal"
+            {
+              echo "## ❌ FactsUnlocked – credential check FAILED"
+              echo ""
+              echo "**Action required** — one or more secrets need renewal."
+              echo "Most common cause: YouTube OAuth token expired."
+              echo "**Fix:** run \`python scripts/get_youtube_token.py\` locally and update \`YOUTUBE_REFRESH_TOKEN\`."
+              echo ""
+              echo "Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::FactsUnlocked health check failed — credentials need renewal"
+          fi
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 2 – AstroFacts credentials
+  # ──────────────────────────────────────────────────────────
+  check-astrofacts:
+    name: "🔍 AstroFacts credentials"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Validate AstroFacts credentials
+        id: check
+        env:
+          GROQ_API_KEY_ASTRO:          ${{ secrets.GROQ_API_KEY_ASTRO }}
+          YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
+          YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
+          YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+          TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
+          TIKTOK_CLIENT_SECRET_ASTRO:  ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
+          TIKTOK_REFRESH_TOKEN_ASTRO:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+        run: python scripts/preflight_check.py --channel astrofacts
+
+      - name: Write summary
+        if: always()
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            echo "## ✅ AstroFacts – all credentials valid" >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## ❌ AstroFacts – credential check FAILED"
+              echo ""
+              echo "**Action required** — one or more secrets need renewal."
+              echo "Most common cause: YouTube OAuth token expired."
+              echo "**Fix:** run \`python scripts/get_youtube_token.py --channel astrofacts\` locally and update \`YOUTUBE_REFRESH_TOKEN_ASTRO\`."
+              echo ""
+              echo "Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::AstroFacts health check failed — credentials need renewal"
           fi
