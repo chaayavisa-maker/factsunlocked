@@ -94,6 +94,7 @@ jobs:
         id: run
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }} 
           PYTHONPATH:   ${{ github.workspace }}:${{ github.workspace }}/src
         run: |
           python src/main.py
