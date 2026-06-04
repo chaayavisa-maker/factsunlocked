@@ -91,8 +91,8 @@ def upload_video_tiktok(
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": video_size,
-            "chunk_size": chunk_size,
-            "total_chunk_count": -(-video_size // chunk_size),  # ceiling div
+            "chunk_size": video_size,
+            "total_chunk_count": 1,  # ceiling div
         },
     }
 
