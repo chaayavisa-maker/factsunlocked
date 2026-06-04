@@ -14,8 +14,8 @@ on:
       publish_only:
         description: |
           Re-publish without regenerating.
-          Paste the artifact name EXACTLY as shown in the Actions run
-          (e.g. factsunlocked_2026-06-04_f99b48).
+          Paste the artifact NAME from a previous run
+          (e.g. astrofacts-daily-2026-06-01).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -94,6 +94,7 @@ jobs:
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
 
+          
           python src/astrofacts_main.py \
             --period daily \
             --reference-date "$REFERENCE_DATE" \
@@ -139,9 +140,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            # Use the name exactly as provided — do not alter underscores or any other characters
-            ARTIFACT=$(echo "${{ github.event.inputs.publish_only }}" | xargs)
-            echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+            NORMALIZED=$(echo "${{ github.event.inputs.publish_only }}" | tr '_' '-')
+            echo "artifact_name=$NORMALIZED" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
