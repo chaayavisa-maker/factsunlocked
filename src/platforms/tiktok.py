@@ -21,7 +21,8 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
-TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+#TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
 
@@ -81,13 +82,13 @@ def upload_video_tiktok(
 
     # Step 1: Initialise upload
     init_body = {
-        "post_info": {
-            "title": caption,
-            "privacy_level": privacy_level,
-            "disable_comment": disable_comment,
-            "disable_duet": disable_duet,
-            "disable_stitch": disable_stitch,
-        },
+        #"post_info": {
+        #   "title": caption,
+        #    "privacy_level": privacy_level,
+        #    "disable_comment": disable_comment,
+        #   "disable_duet": disable_duet,
+        #    "disable_stitch": disable_stitch,
+        #},
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": video_size,
