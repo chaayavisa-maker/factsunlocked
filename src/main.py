@@ -172,7 +172,7 @@ def main():
         publish(metadata)
     else:
         metadata = asyncio.run(generate())
-        publish(metadata)
+        #publish(metadata)
 
 
 if __name__ == "__main__":
