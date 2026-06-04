@@ -4,7 +4,7 @@ permissions:
   contents: read
 on:
   schedule:
-    - cron: "0 18 27 * *"
+    - cron: "0 18 27 * *"      
   workflow_dispatch:
     inputs:
       sign:
@@ -63,7 +63,7 @@ jobs:
     needs: preflight
     if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
     runs-on: ubuntu-latest
-    timeout-minutes: 1500
+    timeout-minutes: 1500           # 20 hours — matches expected max run time
     outputs:
       manifest_path: ${{ steps.run.outputs.manifest_path }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
@@ -84,12 +84,20 @@ jobs:
           GROQ_API_KEY_ASTRO: ${{ secrets.GROQ_API_KEY_ASTRO }}
           PYTHONPATH:         ${{ github.workspace }}
         run: |
+          # Reference date = 1st of next month (the day this monthly content will be published)
+          REFERENCE_DATE=$(date -u -d "$(date -u +%Y-%m-01) +1 month" +%Y-%m-%d)
+          echo "Content reference date: $REFERENCE_DATE"
+
           SIGN_ARG=""
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
 
-          python src/astrofacts_main.py --period monthly $SIGN_ARG
+          
+          python src/astrofacts_main.py \
+            --period monthly \
+            --reference-date "$REFERENCE_DATE" \
+            $SIGN_ARG
 
           MANIFEST=$(find workspace -name "manifest_monthly_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
