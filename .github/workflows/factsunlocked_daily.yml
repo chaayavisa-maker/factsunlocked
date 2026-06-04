@@ -71,7 +71,7 @@ jobs:
     needs: preflight
     if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 1000
     outputs:
       artifact_name: ${{ steps.run.outputs.artifact_name }}
 
