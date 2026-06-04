@@ -23,7 +23,7 @@ _SEEDS = [42, 137, 256, 512, 1024, 2048, 4096, 8192]
 _HEADERS = {
     "Referer": "https://pollinations.ai",
     "User-Agent": "Mozilla/5.0",
-    "Authorization": f"Bearer {os.getenv('POLLINATIONS_TOKEN', '')}",
+    #"Authorization": f"Bearer {os.getenv('POLLINATIONS_TOKEN', '')}",
 
 }
 
