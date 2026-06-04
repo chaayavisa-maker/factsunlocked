@@ -18,8 +18,8 @@ _NEGATIVE = (
 # Fixed seeds per session for reproducibility within a run
 _SEEDS = [42, 137, 256, 512, 1024, 2048, 4096, 8192]
 
-# Pollinations requires a Referer header; a token further raises rate limits.
-# Set POLLINATIONS_TOKEN in your repo secrets / env to unlock higher quotas.
+# Pollinations requires a Referer header to be treated as a browser client.
+# A token (POLLINATIONS_TOKEN secret) bypasses the shared-IP queue limit.
 _HEADERS = {
     "Referer": "https://pollinations.ai",
     "User-Agent": "Mozilla/5.0",
@@ -39,6 +39,10 @@ class ImageAgent:
         """
         Build a Pollinations.ai URL with style injection, negative prompt,
         and an optional seed for deterministic output.
+
+        nologo and enhance are token-gated — sending them without a valid
+        token triggers a 402, so they are only added when POLLINATIONS_TOKEN
+        is set.
         """
         full_prompt = (
             f"{query}, {self.visual_style}, "
@@ -50,14 +54,23 @@ class ImageAgent:
         url = (
             f"https://image.pollinations.ai/prompt/{encoded_prompt}"
             f"?width={self.width}&height={self.height}"
-            f"&nologo=true&enhance=true&safe=true"
+            f"&safe=true"
             f"&negative={encoded_negative}"
         )
+        # nologo and enhance require a token; skip them on the free/anonymous tier
+        if self._token:
+            url += "&nologo=true&enhance=true"
+            url += f"&token={self._token}"
+
         if seed is not None:
             url += f"&seed={seed}"
-        if self._token:
-            url += f"&token={self._token}"
         return url
+
+    def _backoff(self, attempt: int, base: int = 10) -> None:
+        """Exponential backoff: base, base*2, base*4 …"""
+        delay = base * (2 ** attempt)
+        logger.info(f"  ⏳ Waiting {delay}s before retry…")
+        time.sleep(delay)
 
     def _download(self, url: str, save_path: str, attempt_label: str = "") -> bool:
         for attempt in range(self.max_retries):
@@ -69,11 +82,19 @@ class ImageAgent:
                     logger.info(f"  ✓ Image saved ({len(resp.content)//1024}KB) {attempt_label}")
                     return True
                 else:
-                    logger.warning(f"  ✗ Bad response {resp.status_code}, attempt {attempt+1}")
-                    time.sleep(5 + attempt * 3)   # ← was missing for bad-status responses
+                    body_hint = ""
+                    try:
+                        body_hint = f" — {resp.text[:200]}"
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"  ✗ Bad response {resp.status_code}, attempt {attempt+1}{body_hint}"
+                    )
+                    # 402 = IP queue full — back off much longer before retrying
+                    self._backoff(attempt, base=15 if resp.status_code == 402 else 5)
             except Exception as e:
                 logger.warning(f"  ✗ Download attempt {attempt+1} failed: {e}")
-                time.sleep(5 + attempt * 3)
+                self._backoff(attempt)
         return False
 
     def generate_all(self, script: dict, workspace: Path) -> list:
@@ -82,9 +103,13 @@ class ImageAgent:
         image_paths = []
 
         for i, query in enumerate(queries):
+            # Small courteous gap between images to avoid saturating the IP queue
+            if i > 0:
+                time.sleep(3)
+
             save_path = str(workspace / f"image_{i:02d}.jpg")
             seed = _SEEDS[i % len(_SEEDS)]
-            core_query = query.split(",")[0].strip()   # ← moved up; used by both fallbacks
+            core_query = query.split(",")[0].strip()
 
             logger.info(f"\n🖼  Image {i+1}/{len(queries)}: {query[:70]}...")
 
