@@ -97,6 +97,8 @@ def upload_video_tiktok(
     }
 
     logger.info(f"Initialising TikTok upload for '{title}'…")
+    logger.info(f"Init body: {json.dumps(init_body, indent=2)}")
+    logger.info(f"Auth header: Bearer {access_token[:10]}...")
     with httpx.Client(timeout=30) as client:
         resp = client.post(TIKTOK_INIT_URL, headers=headers, json=init_body)
         resp.raise_for_status()
