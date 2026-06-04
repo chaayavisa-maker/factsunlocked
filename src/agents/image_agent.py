@@ -39,14 +39,6 @@ class ImageAgent:
         logger.info(f"Pollinations token: {'set (' + self._token[:6] + '…)' if self._token else 'NOT SET ⚠'}")
 
     def _build_url(self, query: str, seed: int | None = None) -> str:
-        """
-        Build a Pollinations.ai URL with style injection, negative prompt,
-        and an optional seed for deterministic output.
-
-        nologo and enhance are token-gated — sending them without a valid
-        token triggers a 402, so they are only added when POLLINATIONS_TOKEN
-        is set.
-        """
         full_prompt = (
             f"{query}, {self.visual_style}, "
             "8K resolution, professional photography, award winning"
@@ -54,21 +46,19 @@ class ImageAgent:
         encoded_prompt = quote(full_prompt)
         encoded_negative = quote(_NEGATIVE)
 
+        # ✅ new unified endpoint — accepts sk_ keys via ?key=
         url = (
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"https://gen.pollinations.ai/image/{encoded_prompt}"
             f"?width={self.width}&height={self.height}"
             f"&safe=true"
             f"&negative={encoded_negative}"
         )
-        # nologo and enhance require a token; skip them on the free/anonymous tier
         if self._token:
-            url += "&nologo=true&enhance=true"
-            url += f"&key={self._token}"
-
+            url += f"&nologo=true&enhance=true&key={self._token}"  # key=, not token=
         if seed is not None:
             url += f"&seed={seed}"
         return url
-
+        
     def _backoff(self, attempt: int, base: int = 10) -> None:
         """Exponential backoff: base, base*2, base*4 …"""
         delay = base * (2 ** attempt)
