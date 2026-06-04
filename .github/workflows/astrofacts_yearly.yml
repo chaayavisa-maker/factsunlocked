@@ -63,7 +63,7 @@ jobs:
     needs: preflight
     if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
     runs-on: ubuntu-latest
-    timeout-minutes: 1500
+    timeout-minutes: 1500           # 20 hours — matches expected max run time
     outputs:
       manifest_path: ${{ steps.run.outputs.manifest_path }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
@@ -84,12 +84,20 @@ jobs:
           GROQ_API_KEY_ASTRO: ${{ secrets.GROQ_API_KEY_ASTRO }}
           PYTHONPATH:         ${{ github.workspace }}
         run: |
+          # Reference date = Jan 1st next year (the day this yearly content will be published)
+          REFERENCE_DATE=$(date -u -d "Jan 1 $(( $(date -u +%Y) + 1 ))" +%Y-%m-%d)
+          echo "Content reference date: $REFERENCE_DATE"
+
           SIGN_ARG=""
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
 
-          python src/astrofacts_main.py --period yearly $SIGN_ARG
+          
+          python src/astrofacts_main.py \
+            --period yearly \
+            --reference-date "$REFERENCE_DATE" \
+            $SIGN_ARG
 
           MANIFEST=$(find workspace -name "manifest_yearly_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
