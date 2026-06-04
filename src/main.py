@@ -2,9 +2,13 @@
 FactsUnlocked Pipeline Orchestrator
 
 Modes:
-  default        — full pipeline: generate + publish (YouTube + TikTok)
+  default        — full pipeline: generate only (publishing handled by separate YML jobs)
   --publish-only — skip generation, upload existing metadata.json
   --dev          — generate + publish in one shot (local testing)
+
+Flags:
+  --skip-youtube — skip YouTube upload
+  --skip-tiktok  — skip TikTok upload
 """
 
 import argparse
@@ -112,19 +116,20 @@ async def generate() -> dict:
 
 # ── PUBLISH ───────────────────────────────────────────────────────────────
 
-def publish(metadata: dict) -> dict:
+def publish(metadata: dict, skip_youtube: bool = False, skip_tiktok: bool = False) -> dict:
     video_path = Path(metadata["video_path"])
     if not video_path.exists():
         raise FileNotFoundError(
-            f"Video not found: {video_path}\n"
-            "Make sure the generate artifact was downloaded before running publish."
+            f"❌ Video not found: {video_path}\n"
+            f"The artifact may have expired or wasn't downloaded correctly.\n"
+            f"Re-run with publish_only={metadata.get('run_id', '<artifact_name>')} after verifying the artifact still exists."
         )
 
     logger.info("📤 FactsUnlocked — PUBLISH")
     platform_ids = {}
 
     # ── YouTube ───────────────────────────────────────────────────────────
-    if YT_CFG.get("enabled"):
+    if YT_CFG.get("enabled") and not skip_youtube:
         yt_id = upload_video(
             video_path=video_path,
             title=metadata["title"],
@@ -137,9 +142,11 @@ def publish(metadata: dict) -> dict:
         )
         platform_ids["youtube"] = yt_id
         logger.info(f"YouTube ✅ https://youtube.com/shorts/{yt_id}")
+    elif skip_youtube:
+        logger.info("⏭️  YouTube skipped")
 
     # ── TikTok ────────────────────────────────────────────────────────────
-    if TIKTOK_CFG.get("enabled"):
+    if TIKTOK_CFG.get("enabled") and not skip_tiktok:
         from src.platforms.tiktok import upload_video_tiktok
         tt_id = upload_video_tiktok(
             video_path=video_path,
@@ -151,6 +158,8 @@ def publish(metadata: dict) -> dict:
         )
         platform_ids["tiktok"] = tt_id
         logger.info(f"TikTok ✅ publish_id={tt_id}")
+    elif skip_tiktok:
+        logger.info("⏭️  TikTok skipped")
 
     logger.info(f"✅ Published FactsUnlocked: {platform_ids}")
     return {**metadata, "platform_ids": platform_ids}
@@ -162,17 +171,19 @@ def main():
     parser = argparse.ArgumentParser(description="FactsUnlocked pipeline")
     parser.add_argument("--publish-only", metavar="METADATA_PATH", default=None)
     parser.add_argument("--dev", action="store_true")
+    parser.add_argument("--skip-youtube", action="store_true", help="Skip YouTube upload")
+    parser.add_argument("--skip-tiktok",  action="store_true", help="Skip TikTok upload")
     args = parser.parse_args()
 
     if args.publish_only:
         metadata = json.loads(Path(args.publish_only).read_text())
-        publish(metadata)
+        publish(metadata, skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
     elif args.dev:
         metadata = asyncio.run(generate())
-        publish(metadata)
+        publish(metadata, skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
     else:
-        metadata = asyncio.run(generate())
-        #publish(metadata)
+        # Generate only — publishing is handled by separate YML jobs
+        asyncio.run(generate())
 
 
 if __name__ == "__main__":
