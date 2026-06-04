@@ -36,6 +36,7 @@ class ImageAgent:
         self.timeout = 120
         self.max_retries = 4
         self._token = os.getenv("POLLINATIONS_TOKEN", "")
+        logger.info(f"Pollinations token: {'set (' + self._token[:6] + '…)' if self._token else 'NOT SET ⚠'}")
 
     def _build_url(self, query: str, seed: int | None = None) -> str:
         """
@@ -60,9 +61,9 @@ class ImageAgent:
             f"&negative={encoded_negative}"
         )
         # nologo and enhance require a token; skip them on the free/anonymous tier
-        #if self._token:
-        #   url += "&nologo=true&enhance=true"
-        #    url += f"&token={self._token}"
+        if self._token:
+            url += "&nologo=true&enhance=true"
+            url += f"&token={self._token}"
 
         if seed is not None:
             url += f"&seed={seed}"
