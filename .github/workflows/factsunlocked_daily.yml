@@ -12,8 +12,8 @@ on:
       publish_only:
         description: |
           Re-publish a previous run without regenerating.
-          Paste the artifact NAME from a previous run
-          (e.g. factsunlocked-daily-2026-06-01).
+          Paste the artifact NAME EXACTLY as shown in the Actions run
+          (e.g. factsunlocked_2026-06-04_f99b48).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -144,9 +144,10 @@ jobs:
         run: |
           # ── publish-only: user supplied a name explicitly ──────────────────
           if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            NORMALIZED=$(echo "${{ github.event.inputs.publish_only }}" | tr '_' '-')
-            echo "artifact_name=$NORMALIZED" >> "$GITHUB_OUTPUT"
-            echo "✅ publish-only mode → $NORMALIZED"
+            # Use the name exactly as provided — do not alter underscores or any other characters
+            ARTIFACT=$(echo "${{ github.event.inputs.publish_only }}" | xargs)
+            echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+            echo "✅ publish-only mode → $ARTIFACT"
             exit 0
           fi
 
