@@ -97,6 +97,7 @@ jobs:
         id: run
         env:
           GROQ_API_KEY_ASTRO: ${{ secrets.GROQ_API_KEY_ASTRO }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }} 
           PYTHONPATH:         ${{ github.workspace }}
         run: |
           SIGN_ARG=""
