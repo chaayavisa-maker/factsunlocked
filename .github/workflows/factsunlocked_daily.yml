@@ -148,8 +148,10 @@ jobs:
             ARTIFACT=$(echo "${{ github.event.inputs.publish_only }}" | xargs)
 
             RUN_ID=$(gh api \
-              "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-              --jq '[.artifacts[] | select(.name == "'"$ARTIFACT"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
+              "repos/${{ github.repository }}/actions/artifacts" \
+              --paginate \
+              --jq '.artifacts[] | select(.name == "'"$ARTIFACT"'") | select(.expired == false) | .workflow_run.id' \
+              | tail -1)
 
             if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
               echo "❌ Could not find non-expired artifact: $ARTIFACT"
@@ -173,12 +175,15 @@ jobs:
 
           # ── last-resort fallback ───────────────────────────────────────────
           echo "⚠️  generate output empty – querying API for latest factsunlocked-daily-* artifact…"
-          LATEST_JSON=$(gh api \
-            "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name | startswith("factsunlocked-daily-")) | select(.expired == false)] | sort_by(.created_at) | last')
 
-          LATEST=$(echo "$LATEST_JSON" | jq -r '.name')
-          RUN_ID=$(echo "$LATEST_JSON"  | jq -r '.workflow_run.id')
+          RESULT=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts" \
+            --paginate \
+            --jq '.artifacts[] | select(.name | startswith("factsunlocked-daily-")) | select(.expired == false) | "\(.workflow_run.id) \(.name)"' \
+            | sort | tail -1)
+
+          RUN_ID=$(echo "$RESULT" | cut -d' ' -f1)
+          LATEST=$(echo "$RESULT" | cut -d' ' -f2)
 
           if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
             echo "❌ No unexpired factsunlocked-daily-* artifact found in this repo."
