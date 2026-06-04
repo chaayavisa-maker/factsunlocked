@@ -11,6 +11,14 @@ Modes:
 Platform flags (can be combined):
   --skip-youtube                 — skip YouTube publishing
   --skip-tiktok                  — skip TikTok publishing
+
+Date control:
+  --reference-date YYYY-MM-DD    — the date the content is FOR (publish date).
+                                   Defaults to tomorrow for daily, next Monday
+                                   for weekly, 1st of next month for monthly,
+                                   and next Jan 1st for yearly.
+                                   Override this in CI via the workflow's
+                                   computed target date.
 """
 
 import argparse
@@ -18,7 +26,7 @@ import asyncio
 import json
 import sys
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import yaml
@@ -52,24 +60,59 @@ TIKTOK_CFG  = ASTRO_CFG["platforms"]["tiktok"]
 WORKSPACE   = Path(CONFIG["video"]["workspace_dir"])
 
 
+def default_reference_date(period: str) -> date:
+    """
+    Return the natural publish date for content generated today.
+    This is what the workflow cron is aligned to:
+      daily   → tomorrow
+      weekly  → next Monday
+      monthly → 1st of next month
+      yearly  → January 1st of next year
+    """
+    today = date.today()
+    if period == "daily":
+        return today + timedelta(days=1)
+    elif period == "weekly":
+        # days until next Monday (weekday 0); if today is Sunday (6) → 1 day ahead
+        days_ahead = (0 - today.weekday()) % 7 or 7
+        return today + timedelta(days=days_ahead)
+    elif period == "monthly":
+        # 1st of next month
+        if today.month == 12:
+            return date(today.year + 1, 1, 1)
+        return date(today.year, today.month + 1, 1)
+    elif period == "yearly":
+        return date(today.year + 1, 1, 1)
+    return today + timedelta(days=1)
+
+
 # ── GENERATE ─────────────────────────────────────────────────────────────────
 
-async def generate_sign(sign: str, period: str) -> dict:
-    """Full generation pipeline for one (sign, period). Does NOT publish."""
+async def generate_sign(sign: str, period: str, reference_date: date) -> dict:
+    """Full generation pipeline for one (sign, period). Does NOT publish.
+
+    reference_date: the date the content is FOR (the publish date), not the
+                    run date. Planetary positions are computed for this date.
+    """
     run_id = (
         f"astrofacts_{period}_{sign.lower()}"
-        f"_{date.today().isoformat()}_{uuid.uuid4().hex[:6]}"
+        f"_{reference_date.isoformat()}_{uuid.uuid4().hex[:6]}"
     )
     ws = WORKSPACE / run_id
     ws.mkdir(parents=True, exist_ok=True)
     symbol = SIGN_SYMBOLS.get(sign, "✨")
 
     logger.info("=" * 60)
-    logger.info(f"  GENERATE | {symbol} {sign} | {period.upper()} | {date.today()}")
+    logger.info(f"  GENERATE | {symbol} {sign} | {period.upper()}")
+    logger.info(f"  Content for: {reference_date}  (run date: {date.today()})")
     logger.info("=" * 60)
 
-    # 1. Script (real planetary data injected inside)
-    script = generate_horoscope_script(sign, period, api_key_env=API_KEY_ENV)
+    # 1. Script — pass reference_date so planetary positions are for publish day
+    script = generate_horoscope_script(
+        sign, period,
+        api_key_env=API_KEY_ENV,
+        reference_date=reference_date,
+    )
 
     # ── Adapt horoscope script format to what the shared agents expect ────────
     from config.zodiac import SIGN_ELEMENTS
@@ -116,13 +159,14 @@ async def generate_sign(sign: str, period: str) -> dict:
 
     music_credit = MusicAgent.get_credit() if music_path else ""
     metadata = {
-        "run_id":      run_id,
-        "sign":        sign,
-        "period":      period,
-        "title":       seo.get("title", script.get("title", f"{sign} {period.title()} Horoscope")),
-        "description": seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
-        "tags":        seo.get("tags", []),
-        "video_path":  final_path,
+        "run_id":         run_id,
+        "sign":           sign,
+        "period":         period,
+        "reference_date": reference_date.isoformat(),   # publish date, for auditability
+        "title":          seo.get("title", script.get("title", f"{sign} {period.title()} Horoscope")),
+        "description":    seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
+        "tags":           seo.get("tags", []),
+        "video_path":     final_path,
     }
     meta_path = ws / "metadata.json"
     meta_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
@@ -130,21 +174,28 @@ async def generate_sign(sign: str, period: str) -> dict:
     return metadata
 
 
-async def generate_all_signs(period: str) -> list[dict]:
+async def generate_all_signs(period: str, reference_date: date) -> list[dict]:
     logger.info(f"🔮 GENERATE — {period.upper()} batch for all 12 signs")
+    logger.info(f"   Content for: {reference_date}  (run date: {date.today()})")
     results, errors = [], []
 
     for sign in ZODIAC_SIGNS:
         try:
-            results.append(await generate_sign(sign, period))
+            results.append(await generate_sign(sign, period, reference_date))
         except Exception as e:
             logger.error(f"❌ Generate failed for {sign}: {e}", exc_info=True)
             errors.append(sign)
 
-    manifest_path = WORKSPACE / f"manifest_{period}_{date.today().isoformat()}.json"
+    # Name the manifest after the reference (publish) date, not the run date
+    manifest_path = WORKSPACE / f"manifest_{period}_{reference_date.isoformat()}.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(
-        {"period": period, "runs": [r["run_id"] for r in results], "failed": errors},
+        {
+            "period":         period,
+            "reference_date": reference_date.isoformat(),
+            "runs":           [r["run_id"] for r in results],
+            "failed":         errors,
+        },
         indent=2,
     ))
     logger.info(f"Manifest → {manifest_path}")
@@ -257,6 +308,17 @@ def main():
     parser.add_argument("--dev", action="store_true", help="Generate + publish (local dev)")
     parser.add_argument("--skip-youtube", action="store_true", help="Skip YouTube publishing")
     parser.add_argument("--skip-tiktok",  action="store_true", help="Skip TikTok publishing")
+    parser.add_argument(
+        "--reference-date",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help=(
+            "The date the content is FOR (publish date). "
+            "Planetary positions are computed for this date. "
+            "Defaults to the natural next publish date for the given period "
+            "(tomorrow for daily, next Monday for weekly, etc.)."
+        ),
+    )
     args = parser.parse_args()
 
     if hasattr(args, 'publish_only') and args.publish_only is not None and not args.publish_only.strip():
@@ -267,6 +329,18 @@ def main():
     skip_youtube = args.skip_youtube
     skip_tiktok  = args.skip_tiktok
 
+    # Resolve reference date: CLI arg → smart default
+    if args.reference_date:
+        try:
+            reference_date = date.fromisoformat(args.reference_date)
+        except ValueError:
+            logger.error(f"Invalid --reference-date '{args.reference_date}'. Use YYYY-MM-DD.")
+            sys.exit(1)
+    else:
+        reference_date = default_reference_date(period)
+
+    logger.info(f"📅 Reference date (content for): {reference_date}")
+
     if args.publish_only:
         publish_from_manifest(
             Path(args.publish_only),
@@ -276,21 +350,26 @@ def main():
         )
 
     elif args.dev and sign:
-        metadata = asyncio.run(generate_sign(sign, period))
+        metadata = asyncio.run(generate_sign(sign, period, reference_date))
         publish_sign(metadata, skip_youtube=skip_youtube, skip_tiktok=skip_tiktok)
 
     elif sign:
-        metadata = asyncio.run(generate_sign(sign, period))
-        manifest_path = WORKSPACE / f"manifest_{period}_{date.today().isoformat()}.json"
+        metadata = asyncio.run(generate_sign(sign, period, reference_date))
+        manifest_path = WORKSPACE / f"manifest_{period}_{reference_date.isoformat()}.json"
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(
-            {"period": period, "runs": [metadata["run_id"]], "failed": []},
+            {
+                "period":         period,
+                "reference_date": reference_date.isoformat(),
+                "runs":           [metadata["run_id"]],
+                "failed":         [],
+            },
             indent=2,
         ))
         logger.info(f"Manifest → {manifest_path}")
 
     else:
-        asyncio.run(generate_all_signs(period))
+        asyncio.run(generate_all_signs(period, reference_date))
 
 
 if __name__ == "__main__":
