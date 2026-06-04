@@ -23,6 +23,8 @@ _SEEDS = [42, 137, 256, 512, 1024, 2048, 4096, 8192]
 _HEADERS = {
     "Referer": "https://pollinations.ai",
     "User-Agent": "Mozilla/5.0",
+    "Authorization": f"Bearer {os.getenv('POLLINATIONS_TOKEN', '')}",
+
 }
 
 
@@ -58,9 +60,9 @@ class ImageAgent:
             f"&negative={encoded_negative}"
         )
         # nologo and enhance require a token; skip them on the free/anonymous tier
-        if self._token:
-            url += "&nologo=true&enhance=true"
-            url += f"&token={self._token}"
+        #if self._token:
+        #   url += "&nologo=true&enhance=true"
+        #    url += f"&token={self._token}"
 
         if seed is not None:
             url += f"&seed={seed}"
