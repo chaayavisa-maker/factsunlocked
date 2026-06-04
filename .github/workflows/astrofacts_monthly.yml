@@ -4,7 +4,7 @@ permissions:
   contents: read
 on:
   schedule:
-    - cron: "0 1 1 * *"          # 1st of every month at 01:00 UTC
+    - cron: "0 18 27 * *"
   workflow_dispatch:
     inputs:
       sign:
@@ -29,22 +29,16 @@ on:
         default: "false"
 
 jobs:
-  # ────────────────────────────────────────────────────────────
-  # JOB 1 – Preflight
-  # ────────────────────────────────────────────────────────────
   preflight:
     name: "🔍 Preflight checks"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install check dependencies
         run: pip install httpx
-
       - name: Check all credentials
         env:
           GROQ_API_KEY_ASTRO:            ${{ secrets.GROQ_API_KEY_ASTRO }}
@@ -64,35 +58,26 @@ jobs:
           fi
           python scripts/preflight_check.py --channel astrofacts $SKIP_FLAGS
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 2 – Generate (12 signs → 12 video files + manifest)
-  # Skipped when publish_only is set.
-  # ────────────────────────────────────────────────────────────
   generate:
     name: "🎬 Generate videos"
     needs: preflight
     if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 1500
     outputs:
       manifest_path: ${{ steps.run.outputs.manifest_path }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-liberation
-
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-
       - name: Generate all 12 signs
         id: run
         env:
@@ -122,7 +107,6 @@ jobs:
           echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
           echo "✅ Manifest : $MANIFEST"
           echo "✅ Artifact : $ARTIFACT"
-
       - name: Upload workspace artifact
         uses: actions/upload-artifact@v4
         with:
@@ -130,9 +114,6 @@ jobs:
           path: workspace/
           retention-days: 7
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 3 – Resolve which artifact to publish
-  # ────────────────────────────────────────────────────────────
   resolve_artifact:
     name: "🔎 Resolve artifact name"
     needs: [preflight, generate]
@@ -143,48 +124,36 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       artifact_name: ${{ steps.pick.outputs.artifact_name }}
-
     steps:
       - name: Pick artifact name
         id: pick
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # ── publish-only: user supplied a name explicitly ──────────────────
           if [ -n "${{ github.event.inputs.publish_only }}" ]; then
             NORMALIZED=$(echo "${{ github.event.inputs.publish_only }}" | tr '_' '-')
             echo "artifact_name=$NORMALIZED" >> "$GITHUB_OUTPUT"
             echo "✅ publish-only mode → $NORMALIZED"
             exit 0
           fi
-
-          # ── normal flow: use what the generate job told us ─────────────────
           ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
           if [ -n "$ARTIFACT" ]; then
             echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
             echo "✅ normal flow → $ARTIFACT"
             exit 0
           fi
-
-          # ── last-resort fallback ───────────────────────────────────────────
-          echo "⚠️  generate output empty – querying API for latest astrofacts-monthly-* artifact…"
+          echo "⚠️  generate output empty – querying API for latest astrofacts-weekly-* artifact…"
           LATEST=$(gh api \
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
             --jq '[.artifacts[] | select(.name | startswith("astrofacts-monthly-")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
-
           echo "🔍 API returned: '$LATEST'"
-
           if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-            echo "❌ No unexpired astrofacts-monthly-* artifact found in this repo."
+            echo "❌ No unexpired astrofacts-weekly-* artifact found in this repo."
             exit 1
           fi
-
           echo "artifact_name=$LATEST" >> "$GITHUB_OUTPUT"
           echo "✅ fallback  → $LATEST"
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 4 – Publish to YouTube
-  # ────────────────────────────────────────────────────────────
   publish_youtube:
     name: "▶️ Publish to YouTube"
     needs: [preflight, resolve_artifact]
@@ -195,17 +164,13 @@ jobs:
       github.event.inputs.skip_youtube != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-
       - name: Resolve artifact run-id
         id: artifact_run
         env:
@@ -215,13 +180,11 @@ jobs:
           RUN_ID=$(gh api \
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
             --jq '[.artifacts[] | select(.name == "'"$ARTIFACT_NAME"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
-
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
             echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
             exit 1
           fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -229,7 +192,6 @@ jobs:
           path: workspace/
           run-id: ${{ steps.artifact_run.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Resolve manifest path
         id: meta
         run: |
@@ -240,7 +202,6 @@ jobs:
           fi
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
           echo "✅ Resolved manifest: $MANIFEST"
-
       - name: Publish to YouTube
         env:
           YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
@@ -252,16 +213,12 @@ jobs:
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
-
           python src/astrofacts_main.py \
             --period monthly \
             --publish-only "${{ steps.meta.outputs.manifest }}" \
             --skip-tiktok \
             $SIGN_ARG
 
-  # ────────────────────────────────────────────────────────────
-  # JOB 5 – Publish to TikTok
-  # ────────────────────────────────────────────────────────────
   publish_tiktok:
     name: "🎵 Publish to TikTok"
     needs: [preflight, resolve_artifact]
@@ -272,17 +229,13 @@ jobs:
       github.event.inputs.skip_tiktok != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-
       - name: Resolve artifact run-id
         id: artifact_run
         env:
@@ -292,13 +245,11 @@ jobs:
           RUN_ID=$(gh api \
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
             --jq '[.artifacts[] | select(.name == "'"$ARTIFACT_NAME"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
-
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
             echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
             exit 1
           fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -306,7 +257,6 @@ jobs:
           path: workspace/
           run-id: ${{ steps.artifact_run.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Resolve manifest path
         id: meta
         run: |
@@ -317,7 +267,6 @@ jobs:
           fi
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
           echo "✅ Resolved manifest: $MANIFEST"
-
       - name: Publish to TikTok
         env:
           TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
@@ -329,7 +278,6 @@ jobs:
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
-
           python src/astrofacts_main.py \
             --period monthly \
             --publish-only "${{ steps.meta.outputs.manifest }}" \
