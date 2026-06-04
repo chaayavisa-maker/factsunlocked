@@ -63,7 +63,7 @@ class ImageAgent:
         # nologo and enhance require a token; skip them on the free/anonymous tier
         if self._token:
             url += "&nologo=true&enhance=true"
-            url += f"&token={self._token}"
+            url += f"&key={self._token}"
 
         if seed is not None:
             url += f"&seed={seed}"
