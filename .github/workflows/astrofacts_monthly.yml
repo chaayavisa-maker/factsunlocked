@@ -82,6 +82,7 @@ jobs:
         id: run
         env:
           GROQ_API_KEY_ASTRO: ${{ secrets.GROQ_API_KEY_ASTRO }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN_ASTRO }}
           PYTHONPATH:         ${{ github.workspace }}
         run: |
           # Reference date = 1st of next month (the day this monthly content will be published)
