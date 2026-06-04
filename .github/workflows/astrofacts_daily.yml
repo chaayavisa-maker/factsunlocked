@@ -4,7 +4,7 @@ permissions:
   contents: read
 on:
   schedule:
-    - cron: "0 1 * * *"          # every day at 03:00 UTC (day before, ~21h generation window)
+    - cron: "0 1 * * *"         
   workflow_dispatch:
     inputs:
       sign:
@@ -85,12 +85,20 @@ jobs:
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
           PYTHONPATH:         ${{ github.workspace }}
         run: |
+          # Reference date = tomorrow (the day this content will be published)
+          REFERENCE_DATE=$(date -u -d "tomorrow" +%Y-%m-%d)
+          echo "Content reference date: $REFERENCE_DATE"
+
           SIGN_ARG=""
           if [ -n "${{ github.event.inputs.sign }}" ]; then
             SIGN_ARG="--sign ${{ github.event.inputs.sign }}"
           fi
 
-          python src/astrofacts_main.py --period daily $SIGN_ARG
+          
+          python src/astrofacts_main.py \
+            --period daily \
+            --reference-date "$REFERENCE_DATE" \
+            $SIGN_ARG
 
           MANIFEST=$(find workspace -name "manifest_daily_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
