@@ -277,7 +277,7 @@ def generate_horoscope_script(
     )
 
     # ── 1. Compute real sky positions ────────────────────────────────────────
-    logger.info(f"Computing planetary positions for {sign} {period} (publish: {publish_date})")
+    logger.info(f"Computing planetary positions for {sign} {period} (publish: {publish_date.isoformat()})")
     try:
         ctx      = get_planetary_context(period, publish_date)
         transits = get_sign_transits(sign, ctx)
