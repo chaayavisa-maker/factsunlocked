@@ -9,8 +9,14 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 _NEGATIVE = (
-    "text, watermark, logo, caption, subtitle, words, letters, blurry, "
-    "low quality, ugly, deformed, cartoon, anime, drawing, painting, "
+    # ── Language / script artefacts ──────────────────────────────────────
+    "chinese characters, chinese text, chinese writing, hanzi, kanji, "
+    "japanese text, korean text, asian script, cyrillic, arabic script, "
+    "non-latin characters, foreign language text, "
+    # ── Generic text / branding ───────────────────────────────────────────
+    "text, watermark, logo, caption, subtitle, words, letters, "
+    # ── Quality ───────────────────────────────────────────────────────────
+    "blurry, low quality, ugly, deformed, cartoon, anime, drawing, painting, "
     "cropped, oversaturated, noise, grain"
 )
 
@@ -38,11 +44,14 @@ class ImageAgent:
     def _build_url(self, query: str, seed: int | None = None) -> str:
         full_prompt = (
             f"{query}, {self.visual_style}, "
+            "western style, no text, no writing, latin alphabet only, "
             "8K resolution, professional photography, award winning"
         )
         url = (
+            # FIX: pin to `flux` model — far less likely to hallucinate CJK text
             f"https://gen.pollinations.ai/image/{quote(full_prompt)}"
-            f"?width={self.width}&height={self.height}"
+            f"?model=flux"
+            f"&width={self.width}&height={self.height}"
             f"&safe=true&negative={quote(_NEGATIVE)}"
         )
         if self._token:
