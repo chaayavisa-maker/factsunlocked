@@ -23,7 +23,7 @@ channels:
         max_duration_seconds: 60
     groq_api_key_env: "GROQ_API_KEY"
     video:
-      scenes_count: 6
+      scenes_count: 4
       font_size: 68
       fps: 30
       music_volume: 0.12
@@ -59,7 +59,7 @@ channels:
         max_duration_seconds: 60
     groq_api_key_env: "GROQ_API_KEY_ASTRO"
     video:
-      scenes_count: 5
+      scenes_count: 4
       font_size: 68
       fps: 30
       music_volume: 0.10
