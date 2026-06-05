@@ -1,6 +1,6 @@
 # ============================================================
 #  AstroFacts - Pisces
-#  Scheduled: 03:45 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_12
+#  Scheduled: 04:45 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO
 # ============================================================
 name: "AstroFacts - Pisces"
 permissions:
@@ -9,7 +9,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "45 3 * * *"
+    - cron: "45 4 * * *"
   workflow_dispatch:
     inputs:
       publish_only:
