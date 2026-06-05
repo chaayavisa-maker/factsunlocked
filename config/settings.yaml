@@ -28,7 +28,7 @@ channels:
       fps: 30
       music_volume: 0.12
     tts:
-      voice: "en-US-AriaNeural"
+      voice: "en-US-GuyNeural"
       rate: "+5%"
 
   # ─────────────────────────────────────────────
