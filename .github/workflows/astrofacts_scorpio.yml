@@ -40,7 +40,7 @@ jobs:
       skip_tiktok:  ${{ github.event.inputs.skip_tiktok  == 'true' }}
     secrets:
       GROQ_API_KEY_ASTRO:          ${{ secrets.GROQ_API_KEY_ASTRO }}
-      POLLINATIONS_TOKEN:          ${{ secrets.POLLINATIONS_TOKEN_ASTRO_8 }}
+      POLLINATIONS_TOKEN:          ${{ secrets.POLLINATIONS_TOKEN_ASTRO_2 }}
       YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
       YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
       YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
