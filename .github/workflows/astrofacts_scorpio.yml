@@ -1,6 +1,6 @@
 # ============================================================
 #  AstroFacts - Scorpio
-#  Scheduled: 02:45 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_8
+#  Scheduled: 03:45 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_2
 # ============================================================
 name: "AstroFacts - Scorpio"
 permissions:
@@ -9,7 +9,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "45 2 * * *"
+    - cron: "45 3 * * *"
   workflow_dispatch:
     inputs:
       publish_only:
