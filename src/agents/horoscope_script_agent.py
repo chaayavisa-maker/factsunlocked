@@ -367,7 +367,7 @@ ASTROLOGICAL INTERPRETATION RULES:
 OUTPUT FORMAT (JSON, exactly {scenes_count} scenes):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {{
-  "title": "YouTube Short title ≤60 chars — include {sign}, {period}, and a specific hook word",
+  "title": "YouTube Short title ≤60 chars — include {sign}, {period}, {publish_date}, and a specific hook word",
   "hook": "One electric opening sentence referencing a specific transit (spoken in 3 seconds)",
   "scenes": [
     {{
