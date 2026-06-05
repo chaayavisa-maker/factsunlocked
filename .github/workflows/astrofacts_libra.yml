@@ -1,0 +1,49 @@
+# ============================================================
+#  AstroFacts - Libra
+#  Scheduled: 02:30 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_7
+# ============================================================
+name: "AstroFacts - Libra"
+permissions:
+  actions: read
+  contents: read
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+    inputs:
+      publish_only:
+        description: >
+          Re-publish without regenerating.
+          Paste the artifact NAME from a previous run
+          (e.g. astrofacts-daily-libra-2026-06-01).
+          Leave blank for a full generate + publish run.
+        required: false
+        default: ""
+      skip_youtube:
+        description: "Skip YouTube upload for this run (true/false)"
+        required: false
+        default: "false"
+      skip_tiktok:
+        description: "Skip TikTok upload for this run (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  run:
+    name: "Run base workflow for Libra"
+    uses: ./.github/workflows/_base_astrofacts.yml
+    with:
+      sign:         "libra"
+      publish_only: ${{ github.event.inputs.publish_only || '' }}
+      skip_youtube: ${{ github.event.inputs.skip_youtube == 'true' }}
+      skip_tiktok:  ${{ github.event.inputs.skip_tiktok  == 'true' }}
+    secrets:
+      GROQ_API_KEY_ASTRO:          ${{ secrets.GROQ_API_KEY_ASTRO }}
+      POLLINATIONS_TOKEN:          ${{ secrets.POLLINATIONS_TOKEN_ASTRO_7 }}
+      YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
+      YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
+      YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+      TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
+      TIKTOK_CLIENT_SECRET_ASTRO:  ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
+      TIKTOK_REFRESH_TOKEN_ASTRO:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
