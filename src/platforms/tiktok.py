@@ -13,6 +13,7 @@ Reference: https://developers.tiktok.com/doc/content-posting-api-get-started
 
 import os
 import json
+import math
 import time
 import httpx
 from pathlib import Path
@@ -24,6 +25,10 @@ TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 #TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
 TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
+
+# TikTok FILE_UPLOAD chunk constraints
+_MIN_CHUNK = 5 * 1024 * 1024   # 5 MB  – TikTok's documented minimum
+_MAX_CHUNK = 64 * 1024 * 1024  # 64 MB – TikTok's documented maximum
 
 
 def _refresh_access_token(
@@ -75,7 +80,12 @@ def upload_video_tiktok(
     }
 
     video_size = video_path.stat().st_size
-    chunk_size = min(video_size, 10 * 1024 * 1024)  # 10MB max chunk
+
+    # Chunk size must be between 5 MB and 64 MB per TikTok spec.
+    # For files smaller than 5 MB we send the whole thing as one chunk —
+    # TikTok allows chunk_size == video_size when total_chunk_count == 1.
+    chunk_size = max(_MIN_CHUNK, min(_MAX_CHUNK, video_size))
+    total_chunk_count = math.ceil(video_size / chunk_size)
 
     # Caption: TikTok allows 2200 chars; combine title + description
     caption = f"{title}\n\n{description}"[:2200]
@@ -83,7 +93,7 @@ def upload_video_tiktok(
     # Step 1: Initialise upload
     init_body = {
         "post_info": {
-           "title": caption,
+            "title": caption,
             "privacy_level": privacy_level,
             "disable_comment": disable_comment,
             "disable_duet": disable_duet,
@@ -92,12 +102,17 @@ def upload_video_tiktok(
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": video_size,
-            "chunk_size": video_size,
-            "total_chunk_count": 1,  # ceiling div
+            # FIX: was `video_size` (the raw int), must be the computed chunk_size
+            "chunk_size": chunk_size,
+            # FIX: was hardcoded 1, must match the actual number of chunks
+            "total_chunk_count": total_chunk_count,
         },
     }
 
-    logger.info(f"Initialising TikTok upload for '{title}'…")
+    logger.info(
+        f"Initialising TikTok upload for '{title}'… "
+        f"({video_size} bytes, {total_chunk_count} chunk(s) of {chunk_size} bytes)"
+    )
     logger.info(f"Init body: {json.dumps(init_body, indent=2)}")
     logger.info(f"Auth header: Bearer {access_token[:10]}...")
     with httpx.Client(timeout=30) as client:
@@ -112,9 +127,9 @@ def upload_video_tiktok(
     publish_id = data["data"]["publish_id"]
 
     # Step 2: Upload chunks
-    logger.info(f"Uploading video chunks to TikTok…")
+    logger.info("Uploading video chunks to TikTok…")
     video_bytes = video_path.read_bytes()
-    chunks = [video_bytes[i:i+chunk_size] for i in range(0, video_size, chunk_size)]
+    chunks = [video_bytes[i : i + chunk_size] for i in range(0, video_size, chunk_size)]
 
     for idx, chunk in enumerate(chunks):
         start = idx * chunk_size
@@ -126,7 +141,7 @@ def upload_video_tiktok(
         with httpx.Client(timeout=120) as client:
             put_resp = client.put(upload_url, headers=chunk_headers, content=chunk)
             put_resp.raise_for_status()
-        logger.info(f"Chunk {idx+1}/{len(chunks)} uploaded.")
+        logger.info(f"Chunk {idx + 1}/{len(chunks)} uploaded ({len(chunk)} bytes).")
 
     # Step 3: Poll status
     logger.info("Polling TikTok publish status…")
