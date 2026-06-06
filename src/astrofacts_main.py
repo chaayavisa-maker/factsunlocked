@@ -163,7 +163,7 @@ async def generate_sign(sign: str, period: str, reference_date: date) -> dict:
         "sign":           sign,
         "period":         period,
         "reference_date": reference_date.isoformat(),   # publish date, for auditability
-        "title":          seo.get("title", script.get("title", f"{sign} {period.title()} {reference_date.isoformat()} Horoscope")),
+        "title":          seo.get("title", script.get("title", f"{sign} {period.title()} Horoscope")),
         "description":    seo.get("description", "") + (f"\n\n{music_credit}" if music_credit else ""),
         "tags":           seo.get("tags", []),
         "video_path":     final_path,
