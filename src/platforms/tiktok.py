@@ -21,10 +21,9 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-TIKTOK_TOKEN_URL  = "https://open.tiktokapis.com/v2/oauth/token/"
-# Using content/init instead of inbox/video/init so that post_info.title
-# and post_info.description are honoured and pre-filled in the inbox editing flow.
-TIKTOK_INIT_URL   = "https://open.tiktokapis.com/v2/post/publish/content/init/"
+TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+#TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
 # TikTok FILE_UPLOAD chunk constraints
@@ -69,9 +68,7 @@ def upload_video_tiktok(
     refresh_token_env: str = "TIKTOK_REFRESH_TOKEN_ASTRO",
 ) -> str:
     """
-    Upload a video to TikTok using the Content Posting API (inbox mode).
-    The video lands in the creator's TikTok inbox as a draft; title and
-    description are pre-filled so the creator sees them in the editing flow.
+    Upload a video to TikTok using the Content Posting API.
     Returns the TikTok publish_id.
     """
     access_token = _refresh_access_token(
@@ -90,15 +87,13 @@ def upload_video_tiktok(
     chunk_size = max(_MIN_CHUNK, min(_MAX_CHUNK, video_size))
     total_chunk_count = math.ceil(video_size / chunk_size)
 
+    # Caption: TikTok allows 2200 chars; combine title + description
+    caption = f"{title}\n\n{description}"[:2200]
+
     # Step 1: Initialise upload
-    # post_mode=INBOX  → sends to creator's inbox (draft), not direct-publish.
-    # media_type=VIDEO → required by content/init (unlike inbox/video/init).
-    # title / description are now separate fields so TikTok pre-fills them
-    # correctly in the editing flow when the creator opens the inbox draft.
     init_body = {
         "post_info": {
-            "title": title[:150],                  # TikTok caps title at 150 chars
-            "description": description[:2200],     # hashtags / caption body
+            "title": caption,
             "privacy_level": privacy_level,
             "disable_comment": disable_comment,
             "disable_duet": disable_duet,
@@ -107,11 +102,11 @@ def upload_video_tiktok(
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": video_size,
+            # FIX: was `video_size` (the raw int), must be the computed chunk_size
             "chunk_size": chunk_size,
+            # FIX: was hardcoded 1, must match the actual number of chunks
             "total_chunk_count": total_chunk_count,
         },
-        "post_mode": "INBOX",   # draft → creator's inbox, not an immediate post
-        "media_type": "VIDEO",  # required when using content/init
     }
 
     logger.info(
@@ -159,8 +154,8 @@ def upload_video_tiktok(
         st_data = st_resp.json()
         status = st_data.get("data", {}).get("status", "")
         logger.info(f"TikTok status: {status}")
-        if status in ("PUBLISH_COMPLETE", "SEND_TO_USER_INBOX"):
-            logger.info(f"TikTok inbox delivery complete! publish_id={publish_id}")
+        if status == "PUBLISH_COMPLETE":
+            logger.info(f"TikTok publish complete! publish_id={publish_id}")
             return publish_id
         if status in ("FAILED", "PUBLISH_FAILED"):
             raise RuntimeError(f"TikTok publish failed: {st_data}")
