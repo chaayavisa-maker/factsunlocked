@@ -330,7 +330,12 @@ def generate_horoscope_script(
         )
 
     # Date reference string for description — uses publish date, not run date
-    date_ref = publish_date.strftime("%B  %d, %Y")
+    date_ref = {
+    "daily":   publish_date.strftime("%B %-d, %Y"),
+    "weekly":  f"Week of {publish_date.strftime('%B %-d, %Y')}",
+    "monthly": publish_date.strftime("%B %Y"),
+    "yearly":  str(publish_date.year),
+}.get(period, publish_date.strftime("%B %Y"))
 
     user_prompt = f"""
 You are writing a {period} horoscope video script for {sign} {symbol}.
