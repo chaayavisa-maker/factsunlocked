@@ -95,13 +95,13 @@ def upload_video_tiktok(
 
     # Step 1: Initialise upload
     init_body = {
-        "post_info": {
-            "title": title,
-            "privacy_level": privacy_level,
-            "disable_comment": disable_comment,
-            "disable_duet": disable_duet,
-            "disable_stitch": disable_stitch,
-        },
+        #"post_info": {
+        #   "title": title,
+        #    "privacy_level": privacy_level,
+        #   "disable_comment": disable_comment,
+        #    "disable_duet": disable_duet,
+        #   "disable_stitch": disable_stitch,
+        #},
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": video_size,
