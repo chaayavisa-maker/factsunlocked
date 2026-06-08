@@ -157,8 +157,8 @@ def upload_video_tiktok(
         st_data = st_resp.json()
         status = st_data.get("data", {}).get("status", "")
         logger.info(f"TikTok status: {status}")
-        if status == "PUBLISH_COMPLETE":
-            logger.info(f"TikTok publish complete! publish_id={publish_id}")
+        if status == "SEND_TO_USER_INBOX":
+            logger.info("Upload complete and sent to TikTok inbox.")
             return publish_id
         if status in ("FAILED", "PUBLISH_FAILED"):
             raise RuntimeError(f"TikTok publish failed: {st_data}")
