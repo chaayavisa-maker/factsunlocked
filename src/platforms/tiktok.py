@@ -86,13 +86,12 @@ def upload_video_tiktok(
     # TikTok allows chunk_size == video_size when total_chunk_count == 1.
     chunk_size = max(_MIN_CHUNK, min(_MAX_CHUNK, video_size))
     total_chunk_count = math.ceil(video_size / chunk_size)
-    raw = metadata.get("title", "")
-    parts = raw.split("\n\n", 1)
+    parts = description.split("\n\n", 1)
     short_title = parts[0]          # "7 Reasons You're Hooked"
     description = parts[1] if len(parts) > 1 else ""  # description + hashtags
 
     # Caption: TikTok allows 2200 chars; combine title + description
-    caption = f"{short_title}\n\n{description}"[:2200]
+    caption = f"{title}\n\n{description}"[:2200]
 
     # Step 1: Initialise upload
     init_body = {
