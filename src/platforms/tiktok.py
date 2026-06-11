@@ -22,7 +22,6 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
-#TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
 TIKTOK_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 TIKTOK_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 
@@ -54,6 +53,28 @@ def _refresh_access_token(
     return token_data["access_token"]
 
 
+def _compute_chunks(video_size: int) -> tuple[int, int]:
+    """
+    Return (chunk_size, total_chunk_count) for a given video_size.
+
+    TikTok rules
+    ────────────
+    • chunk_size must be between _MIN_CHUNK and _MAX_CHUNK …
+    • … EXCEPT when total_chunk_count == 1, chunk_size may equal video_size
+      (even if video_size < _MIN_CHUNK).
+    • The last chunk of a multi-chunk upload is allowed to be smaller than chunk_size.
+    """
+    if video_size <= _MAX_CHUNK:
+        # Single-chunk upload: send the whole file in one PUT.
+        # Setting chunk_size == video_size is always valid for count == 1.
+        return video_size, 1
+
+    # Multi-chunk upload: use the maximum chunk size to minimise round-trips.
+    chunk_size = _MAX_CHUNK
+    total_chunk_count = math.ceil(video_size / chunk_size)
+    return chunk_size, total_chunk_count
+
+
 def upload_video_tiktok(
     video_path: Path,
     title: str,
@@ -80,34 +101,21 @@ def upload_video_tiktok(
     }
 
     video_size = video_path.stat().st_size
+    chunk_size, total_chunk_count = _compute_chunks(video_size)
 
-    # Chunk size must be between 5 MB and 64 MB per TikTok spec.
-    # For files smaller than 5 MB we send the whole thing as one chunk —
-    # TikTok allows chunk_size == video_size when total_chunk_count == 1.
-    chunk_size = max(_MIN_CHUNK, min(_MAX_CHUNK, video_size))
-    total_chunk_count = math.ceil(video_size / chunk_size)
     parts = description.split("\n\n", 1)
-    short_title = parts[0]          # "7 Reasons You're Hooked"
-    description = parts[1] if len(parts) > 1 else ""  # description + hashtags
+    short_title = parts[0]
+    description = parts[1] if len(parts) > 1 else ""
 
     # Caption: TikTok allows 2200 chars; combine title + description
     caption = f"{title}\n\n{description}"[:2200]
 
-    # Step 1: Initialise upload
+    # ── Step 1: Initialise upload ─────────────────────────────────────────────
     init_body = {
-        #"post_info": {
-        #   "title": title,
-        #    "privacy_level": privacy_level,
-        #   "disable_comment": disable_comment,
-        #    "disable_duet": disable_duet,
-        #   "disable_stitch": disable_stitch,
-        #},
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": video_size,
-            # FIX: was `video_size` (the raw int), must be the computed chunk_size
             "chunk_size": chunk_size,
-            # FIX: was hardcoded 1, must match the actual number of chunks
             "total_chunk_count": total_chunk_count,
         },
     }
@@ -118,9 +126,13 @@ def upload_video_tiktok(
     )
     logger.info(f"Init body: {json.dumps(init_body, indent=2)}")
     logger.info(f"Auth header: Bearer {access_token[:10]}...")
+
     with httpx.Client(timeout=30) as client:
         resp = client.post(TIKTOK_INIT_URL, headers=headers, json=init_body)
-        resp.raise_for_status()
+
+    # Always log the body before raising so failed responses are visible in logs.
+    logger.info(f"Init response [{resp.status_code}]: {resp.text}")
+    resp.raise_for_status()
 
     data = resp.json()
     if data.get("error", {}).get("code") != "ok":
@@ -129,10 +141,13 @@ def upload_video_tiktok(
     upload_url = data["data"]["upload_url"]
     publish_id = data["data"]["publish_id"]
 
-    # Step 2: Upload chunks
+    # ── Step 2: Upload chunks ─────────────────────────────────────────────────
     logger.info("Uploading video chunks to TikTok…")
     video_bytes = video_path.read_bytes()
-    chunks = [video_bytes[i : i + chunk_size] for i in range(0, video_size, chunk_size)]
+    chunks = [
+        video_bytes[i : i + chunk_size]
+        for i in range(0, video_size, chunk_size)
+    ]
 
     for idx, chunk in enumerate(chunks):
         start = idx * chunk_size
@@ -143,20 +158,29 @@ def upload_video_tiktok(
         }
         with httpx.Client(timeout=120) as client:
             put_resp = client.put(upload_url, headers=chunk_headers, content=chunk)
-            put_resp.raise_for_status()
+
+        logger.info(
+            f"Chunk {idx + 1}/{len(chunks)} response [{put_resp.status_code}]: "
+            f"{put_resp.text[:200]}"
+        )
+        put_resp.raise_for_status()
         logger.info(f"Chunk {idx + 1}/{len(chunks)} uploaded ({len(chunk)} bytes).")
 
-    # Step 3: Poll status
+    # ── Step 3: Poll status ───────────────────────────────────────────────────
     logger.info("Polling TikTok publish status…")
-    for _ in range(20):
+    for attempt in range(20):
         time.sleep(10)
         status_body = {"publish_id": publish_id}
         with httpx.Client(timeout=30) as client:
             st_resp = client.post(TIKTOK_STATUS_URL, headers=headers, json=status_body)
-            st_resp.raise_for_status()
+
+        logger.info(f"Status poll {attempt + 1} [{st_resp.status_code}]: {st_resp.text}")
+        st_resp.raise_for_status()
+
         st_data = st_resp.json()
         status = st_data.get("data", {}).get("status", "")
         logger.info(f"TikTok status: {status}")
+
         if status == "SEND_TO_USER_INBOX":
             logger.info("Upload complete and sent to TikTok inbox.")
             return publish_id
