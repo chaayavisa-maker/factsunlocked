@@ -39,6 +39,25 @@ class SEOAgent:
 
         return f"{number} {title}"
 
+    @staticmethod
+    def _sanitize_tags(tags: list) -> list:
+        """
+        Clean tags before the budget loop:
+          - Split any comma-merged tags the LLM returns as one string
+          - Strip characters YouTube rejects: < > " and leading/trailing whitespace
+          - Drop empty strings
+        """
+        sanitised = []
+        for t in tags:
+            t = str(t).strip()
+            # LLM sometimes returns "tag1, tag2" as a single tag
+            parts = [p.strip() for p in t.split(",")]
+            for p in parts:
+                p = p.replace("<", "").replace(">", "").replace('"', "").strip()
+                if p:
+                    sanitised.append(p)
+        return sanitised
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
     def generate_metadata(self, topic, script: dict, extra_description: str = "") -> dict:
         # Normalise topic
@@ -60,8 +79,6 @@ class SEOAgent:
         )
         full_narration = " ".join(p for p in parts if p)
 
-        # IMPROVEMENT: longer descriptions (500-800 words) and 100% topic-specific tags.
-        # Removed hardcoded generic tags like "space facts" that appear regardless of topic.
         prompt = f"""You are a YouTube SEO expert specialised in viral Shorts.
 
 Video topic: {topic_title}
@@ -92,7 +109,7 @@ Respond ONLY with valid JSON, no markdown fences:
                 {"role": "user", "content": prompt}
             ],
             temperature=0.65,
-            max_tokens=1800,  # Increased to accommodate longer descriptions
+            max_tokens=1800,
         )
 
         text = response.choices[0].message.content.strip()
@@ -106,19 +123,19 @@ Respond ONLY with valid JSON, no markdown fences:
 
         # Sanitise and enforce limits
         title = meta.get("title", topic_title)[:MAX_TITLE_LEN]
-
-        # Enforce number in title (backup if Groq doesn't comply)
         title = self._enforce_number_in_title(title)
         title = title[:MAX_TITLE_LEN]
 
-        tags = meta.get("tags", [])
+        # Per-tag sanitization: strip invalid chars, split comma-merged tags, drop empties
+        tags = self._sanitize_tags(meta.get("tags", []))
 
-        # IMPROVEMENT: only inject truly universal platform tags, not topic-specific ones
+        # Inject platform tags if missing
         must_have = ["Shorts", "shorts"]
         for t in must_have:
             if t not in tags:
                 tags.insert(0, t)
 
+        # Enforce 500-char total budget
         tag_budget, final_tags = 0, []
         for t in tags:
             if tag_budget + len(t) + 1 <= MAX_TAGS:
