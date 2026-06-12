@@ -57,10 +57,10 @@ channels:
 
         # Period playlists — one video per sign per period goes here
         playlist_ids:
-          daily: ""      # Fill in: YouTube playlist ID for "Daily Horoscopes"
-          weekly: ""     # Fill in: YouTube playlist ID for "Weekly Horoscopes"
-          monthly: ""    # Fill in: YouTube playlist ID for "Monthly Horoscopes"
-          yearly: ""     # Fill in: YouTube playlist ID for "Yearly Horoscopes"
+          daily: "PLgXeGnW_FoPHS4ayOFYX9VCN18nwOvOOx"      # Fill in: YouTube playlist ID for "Daily Horoscopes"
+          weekly: "PLgXeGnW_FoPHGGiWOH3xT1Wzp7ZffjqI-"     # Fill in: YouTube playlist ID for "Weekly Horoscopes"
+          monthly: "PLgXeGnW_FoPHZZaoL_sszlT3H2OtwL7bj"    # Fill in: YouTube playlist ID for "Monthly Horoscopes"
+          yearly: "PLgXeGnW_FoPG4siYiHzer5upbDMydtfq"     # Fill in: YouTube playlist ID for "Yearly Horoscopes"
 
         # IMPROVEMENT: Sign-specific playlists.
         # Create one playlist per zodiac sign on your channel, then paste the IDs here.
@@ -69,18 +69,18 @@ channels:
         # your Aries weekly/monthly in the same playlist.
         # Leave empty strings until you've created the playlists.
         sign_playlist_ids:
-          Aries: ""
-          Taurus: ""
-          Gemini: ""
-          Cancer: ""
-          Leo: ""
-          Virgo: ""
-          Libra: ""
-          Scorpio: ""
-          Sagittarius: ""
-          Capricorn: ""
-          Aquarius: ""
-          Pisces: ""
+          Aries: "PLgXeGnW_FoPGvZeXMxK0tIcvKv_YbKqJ9"
+          Taurus: "PLgXeGnW_FoPGG2oio2Nb-p02MiNZtmAxd"
+          Gemini: "PLgXeGnW_FoPFTxP0ujoadsTsxGnZzBkqY"
+          Cancer: "PLgXeGnW_FoPHIrFpudjDU8uw-6wNFXpEU"
+          Leo: "PLgXeGnW_FoPFxEsdiYEj0ia1xbMEAB0Rj"
+          Virgo: "PLgXeGnW_FoPE8TsPxo4FeWJyfKtQGpyaq"
+          Libra: "PLgXeGnW_FoPHZoJYfNd8EBzzdbw3tAZGV"
+          Scorpio: "PLgXeGnW_FoPG6kbAX6UqikIVH2W72bBxj"
+          Sagittarius: "PLgXeGnW_FoPGsMWrsBNxyh8jLzn1Gtatb"
+          Capricorn: "PLgXeGnW_FoPF4gpDZL6QqlUGzAUDqxQnO"
+          Aquarius: "PLgXeGnW_FoPEz6hmbcepWauG-0dU3oa8q"
+          Pisces: "PLgXeGnW_FoPFCdwX6YRYKR3OnPcaTKbPU"
 
       tiktok:
         enabled: true
