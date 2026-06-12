@@ -6,11 +6,7 @@ permissions:
 
 on:
   schedule:
-    # IMPROVEMENT: Changed from 09:00 UTC (11am Paris / 5am EST) to 14:00 UTC.
-    # 14:00 UTC = 10:00 EST / 07:00 PST — peak morning scroll window for US audience.
-    # YouTube's algorithm gives each video its biggest push in the first 30-60 minutes,
-    # so uploading when your audience is active dramatically increases early view velocity.
-    - cron: "0 14 * * *"
+    - cron: "0 14 * * *"          # every day at 14:00 UTC (10am EST / 7am PST — peak morning scroll)
   workflow_dispatch:
     inputs:
       publish_only:
@@ -97,10 +93,27 @@ jobs:
       - name: Generate video
         id: run
         env:
-          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
-          PYTHONPATH:         ${{ github.workspace }}
-        run: python src/main.py --channel factsunlocked
+          PYTHONPATH:   ${{ github.workspace }}:${{ github.workspace }}/src
+        run: |
+          python src/main.py
+
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          if [ -z "$META" ]; then
+            echo "❌ No metadata.json found in workspace/ after generation."
+            exit 1
+          fi
+
+          DATE=$(python -c "import json,sys; d=json.load(open('$META')); print(d.get('date', ''))" 2>/dev/null || true)
+          if [ -z "$DATE" ]; then
+            DATE=$(date -u +%Y-%m-%d)
+          fi
+          ARTIFACT="factsunlocked-daily-${DATE}"
+
+          echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "✅ Metadata : $META"
+          echo "✅ Artifact : $ARTIFACT"
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
@@ -110,15 +123,91 @@ jobs:
           retention-days: 3
 
   # ──────────────────────────────────────────────────────────
-  # JOB 3 – Publish: upload to YouTube and TikTok
-  # Runs after generate, or directly in publish_only mode.
+  # JOB 3 – Resolve which artifact to publish
   # ──────────────────────────────────────────────────────────
-  publish:
-    name: "🚀 Publish video"
-    needs: generate
-    if: always() && (needs.generate.result == 'success' || github.event.inputs.publish_only != '')
+  resolve_artifact:
+    name: "🔎 Resolve artifact name"
+    needs: [preflight, generate]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.generate.result == 'success' || needs.generate.result == 'skipped')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    outputs:
+      artifact_name:   ${{ steps.pick.outputs.artifact_name }}
+      artifact_run_id: ${{ steps.pick.outputs.artifact_run_id }}
+
+    steps:
+      - name: Pick artifact name
+        id: pick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ── publish-only: user supplied a name explicitly ──────────────────
+          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
+            ARTIFACT=$(echo "${{ github.event.inputs.publish_only }}" | xargs)
+
+            RUN_ID=$(gh api \
+              "repos/${{ github.repository }}/actions/artifacts" \
+              --paginate \
+              --jq '.artifacts[] | select(.name == "'"$ARTIFACT"'") | select(.expired == false) | .workflow_run.id' \
+              | tail -1)
+
+            if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+              echo "❌ Could not find non-expired artifact: $ARTIFACT"
+              exit 1
+            fi
+
+            echo "artifact_name=$ARTIFACT"   >> "$GITHUB_OUTPUT"
+            echo "artifact_run_id=$RUN_ID"   >> "$GITHUB_OUTPUT"
+            echo "✅ publish-only mode → $ARTIFACT (run $RUN_ID)"
+            exit 0
+          fi
+
+          # ── normal flow: artifact lives in THIS run ────────────────────────
+          ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
+          if [ -n "$ARTIFACT" ]; then
+            echo "artifact_name=$ARTIFACT"              >> "$GITHUB_OUTPUT"
+            echo "artifact_run_id=${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+            echo "✅ normal flow → $ARTIFACT (run ${{ github.run_id }})"
+            exit 0
+          fi
+
+          # ── last-resort fallback ───────────────────────────────────────────
+          echo "⚠️  generate output empty – querying API for latest factsunlocked-daily-* artifact…"
+
+          RESULT=$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts" \
+            --paginate \
+            --jq '.artifacts[] | select(.name | startswith("factsunlocked-daily-")) | select(.expired == false) | "\(.workflow_run.id) \(.name)"' \
+            | sort | tail -1)
+
+          RUN_ID=$(echo "$RESULT" | cut -d' ' -f1)
+          LATEST=$(echo "$RESULT" | cut -d' ' -f2)
+
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            echo "❌ No unexpired factsunlocked-daily-* artifact found in this repo."
+            exit 1
+          fi
+
+          echo "artifact_name=$LATEST"     >> "$GITHUB_OUTPUT"
+          echo "artifact_run_id=$RUN_ID"   >> "$GITHUB_OUTPUT"
+          echo "✅ fallback → $LATEST (run $RUN_ID)"
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 4 – Publish to YouTube
+  # Re-run independently: set publish_only=<artifact> + skip_tiktok=true
+  # ──────────────────────────────────────────────────────────
+  publish_youtube:
+    name: "▶️ Publish to YouTube"
+    needs: [preflight, resolve_artifact]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.resolve_artifact.result == 'success' &&
+      github.event.inputs.skip_youtube != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -130,37 +219,83 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Determine artifact name
-        id: artifact
-        run: |
-          if [ -n "${{ github.event.inputs.publish_only }}" ]; then
-            echo "name=${{ github.event.inputs.publish_only }}" >> $GITHUB_OUTPUT
-          else
-            echo "name=${{ needs.generate.outputs.artifact_name }}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download video artifact
+      - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.artifact.outputs.name }}
+          name: ${{ needs.resolve_artifact.outputs.artifact_name }}
           path: workspace/
+          run-id: ${{ needs.resolve_artifact.outputs.artifact_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to platforms
+      - name: Resolve metadata path
+        id: meta
+        run: |
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          if [ -z "$META" ]; then
+            echo "❌ No metadata.json found in workspace/ – aborting."
+            exit 1
+          fi
+          echo "path=$META" >> "$GITHUB_OUTPUT"
+          echo "✅ Resolved metadata: $META"
+
+      - name: Publish to YouTube
         env:
-          GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
           YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          PYTHONPATH:            ${{ github.workspace }}:${{ github.workspace }}/src
+        run: |
+          python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-tiktok
+
+  # ──────────────────────────────────────────────────────────
+  # JOB 5 – Publish to TikTok
+  # Re-run independently: set publish_only=<artifact> + skip_youtube=true
+  # ──────────────────────────────────────────────────────────
+  publish_tiktok:
+    name: "🎵 Publish to TikTok"
+    needs: [preflight, resolve_artifact]
+    if: |
+      always() &&
+      needs.preflight.result == 'success' &&
+      needs.resolve_artifact.result == 'success' &&
+      github.event.inputs.skip_tiktok != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.resolve_artifact.outputs.artifact_name }}
+          path: workspace/
+          run-id: ${{ needs.resolve_artifact.outputs.artifact_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve metadata path
+        id: meta
+        run: |
+          META=$(find workspace -name "metadata.json" | sort | tail -1)
+          if [ -z "$META" ]; then
+            echo "❌ No metadata.json found in workspace/ – aborting."
+            exit 1
+          fi
+          echo "path=$META" >> "$GITHUB_OUTPUT"
+          echo "✅ Resolved metadata: $META"
+
+      - name: Publish to TikTok
+        env:
           TIKTOK_CLIENT_KEY:     ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET:  ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN:  ${{ secrets.TIKTOK_REFRESH_TOKEN }}
-          PYTHONPATH:            ${{ github.workspace }}
+          PYTHONPATH:            ${{ github.workspace }}:${{ github.workspace }}/src
         run: |
-          SKIP_FLAGS=""
-          if [ "${{ github.event.inputs.skip_youtube }}" = "true" ]; then
-            SKIP_FLAGS="$SKIP_FLAGS --skip-youtube"
-          fi
-          if [ "${{ github.event.inputs.skip_tiktok }}" = "true" ]; then
-            SKIP_FLAGS="$SKIP_FLAGS --skip-tiktok"
-          fi
-          python src/main.py --channel factsunlocked --publish-only workspace/ $SKIP_FLAGS
+          python src/main.py --publish-only ${{ steps.meta.outputs.path }} --skip-youtube
