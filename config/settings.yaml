@@ -15,7 +15,10 @@ channels:
       youtube:
         enabled: true
         channel_id: ""
-        category_id: "28"
+        # IMPROVEMENT: category 27 = Education (was 28 = Science & Technology).
+        # Education is a better match for fact-based content and tends to get
+        # higher CPM from educational advertisers.
+        category_id: "27"
         privacy: "public"
         made_for_kids: false
       tiktok:
@@ -32,7 +35,7 @@ channels:
       rate: "+5%"
 
   # ─────────────────────────────────────────────
-  # CHANNEL 2 – AstroFacts (new)
+  # CHANNEL 2 – AstroFacts (astrology)
   # ─────────────────────────────────────────────
   astrofacts:
     enabled: true
@@ -46,17 +49,43 @@ channels:
       youtube:
         enabled: true
         channel_id: ""
+        # IMPROVEMENT: category 22 = People & Blogs is correct for astrology/horoscope.
+        # (Not Education — horoscope content is personal/lifestyle, not instructional.)
         category_id: "22"
         privacy: "public"
         made_for_kids: false
+
+        # Period playlists — one video per sign per period goes here
         playlist_ids:
-          daily: ""
-          weekly: ""
-          monthly: ""
-          yearly: ""
+          daily: ""      # Fill in: YouTube playlist ID for "Daily Horoscopes"
+          weekly: ""     # Fill in: YouTube playlist ID for "Weekly Horoscopes"
+          monthly: ""    # Fill in: YouTube playlist ID for "Monthly Horoscopes"
+          yearly: ""     # Fill in: YouTube playlist ID for "Yearly Horoscopes"
+
+        # IMPROVEMENT: Sign-specific playlists.
+        # Create one playlist per zodiac sign on your channel, then paste the IDs here.
+        # Each video will be added to BOTH its sign playlist AND its period playlist.
+        # This doubles discoverability: viewers who loved your Aries daily will find
+        # your Aries weekly/monthly in the same playlist.
+        # Leave empty strings until you've created the playlists.
+        sign_playlist_ids:
+          Aries: ""
+          Taurus: ""
+          Gemini: ""
+          Cancer: ""
+          Leo: ""
+          Virgo: ""
+          Libra: ""
+          Scorpio: ""
+          Sagittarius: ""
+          Capricorn: ""
+          Aquarius: ""
+          Pisces: ""
+
       tiktok:
         enabled: true
         max_duration_seconds: 60
+
     groq_api_key_env: "GROQ_API_KEY_ASTRO"
     video:
       scenes_count: 2

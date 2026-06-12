@@ -1,6 +1,9 @@
 # ============================================================
 #  AstroFacts - Libra
-#  Scheduled: 03:30 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_1
+#  Scheduled: 15:00 UTC / 11am EST  |  Token: POLLINATIONS_TOKEN_ASTRO_1
+#  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
+#  to spread across the day so each sign gets its own algorithm
+#  push window instead of competing with 11 simultaneous uploads.
 # ============================================================
 name: "AstroFacts - Libra"
 permissions:
@@ -9,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 3 * * *"
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       publish_only:

@@ -1,6 +1,9 @@
 # ============================================================
 #  AstroFacts - Aquarius
-#  Scheduled: 04:30 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_5
+#  Scheduled: 21:00 UTC / 5pm EST  ← peak evening  |  Token: POLLINATIONS_TOKEN_ASTRO_5
+#  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
+#  to spread across the day so each sign gets its own algorithm
+#  push window instead of competing with 11 simultaneous uploads.
 # ============================================================
 name: "AstroFacts - Aquarius"
 permissions:
@@ -9,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 4 * * *"
+    - cron: "0 21 * * *"
   workflow_dispatch:
     inputs:
       publish_only:
