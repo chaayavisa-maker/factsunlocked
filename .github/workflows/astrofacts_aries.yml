@@ -1,6 +1,9 @@
 # ============================================================
 #  AstroFacts - Aries
-#  Scheduled: 01:00 UTC  |  Token: POLLINATIONS_TOKEN_ASTRO_1
+#  Scheduled: 06:00 UTC / 2am EST  |  Token: POLLINATIONS_TOKEN_ASTRO_1
+#  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
+#  to spread across the day so each sign gets its own algorithm
+#  push window instead of competing with 11 simultaneous uploads.
 # ============================================================
 name: "AstroFacts - Aries"
 permissions:
@@ -9,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 1 * * *"
+    - cron: "0 6  * * *"
   workflow_dispatch:
     inputs:
       publish_only:

@@ -25,27 +25,18 @@ class SEOAgent:
         """
         Ensure title starts with a number (3-9 range).
         If no number is found, prepend one based on the content.
-        
-        Examples:
-          "Amazing NASA Facts" → "5 Amazing NASA Facts"
-          "7 Secrets About Space" → "7 Secrets About Space" (already has number)
         """
-        # Check if title already contains a number
         if re.search(r'\b[1-9]\b', title):
             return title
-        
-        # If no number, prepend a random number (3-9)
+
         import random
         number = random.randint(3, 9)
-        
-        # Find a good insertion point (after first word or at start)
         words = title.split()
         if len(words) > 1:
-            # Insert after first word if it's too short, otherwise at start
             first_word = words[0]
-            if len(first_word) < 4:  # e.g., "The", "You", "Why"
+            if len(first_word) < 4:
                 return f"{first_word} {number} {' '.join(words[1:])}"
-        
+
         return f"{number} {title}"
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
@@ -69,6 +60,8 @@ class SEOAgent:
         )
         full_narration = " ".join(p for p in parts if p)
 
+        # IMPROVEMENT: longer descriptions (500-800 words) and 100% topic-specific tags.
+        # Removed hardcoded generic tags like "space facts" that appear regardless of topic.
         prompt = f"""You are a YouTube SEO expert specialised in viral Shorts.
 
 Video topic: {topic_title}
@@ -77,16 +70,16 @@ Full script: {full_narration[:800]}
 
 Generate YouTube metadata. Strict rules:
 - Title: under 100 chars. MUST include a specific number (3-9 range) at the start. Examples: "5 Mind-Blowing Facts", "7 Secrets", "3 Reasons Why". Emotionally charged. No clickbait that doesn't deliver.
-- Description: 200–300 words. Open with the hook verbatim. Expand the key facts with one extra detail each. Add 4 related search questions people might type. Close with a subscribe CTA. Write in second person ("you").
-- Tags: 25–35 tags. Mix single words, 2-word phrases, and 3-word phrases. Always include "Shorts", "shorts", "space facts", "did you know", "mind blowing facts", "science facts".
-- Hashtags: top 6 hashtags ranked by likely reach. Always include #Shorts and #SpaceFacts.
+- Description: 500-800 words. Open with the hook verbatim. Expand the key facts with one extra detail each. Add 4 related search questions people might actually type into YouTube. Include a subscribe CTA. Close with 5-6 relevant hashtags on the last line. Write in second person ("you"). This longer description is essential for YouTube search ranking.
+- Tags: 25-35 tags. ALL tags must be 100% specific to the topic "{topic_title}". Do NOT include generic tags like "space facts", "did you know", "science facts", or "Shorts" unless the video is actually about space. Tags must match what someone searching for THIS specific topic would type. Mix single words, 2-word phrases, and 3-word phrases. Always include "Shorts" and "shorts" as platform tags.
+- Hashtags: top 6 hashtags ranked by likely reach. Always include #Shorts. The remaining 5 must be topic-specific.
 
 Respond ONLY with valid JSON, no markdown fences:
 {{
   "title": "...",
   "description": "...",
   "tags": ["tag1", "tag2", ...],
-  "hashtags": ["#Shorts", "#SpaceFacts", ...]
+  "hashtags": ["#Shorts", "#{topic_title.replace(' ', '')}Facts", ...]
 }}"""
 
         response = self.client.chat.completions.create(
@@ -94,12 +87,12 @@ Respond ONLY with valid JSON, no markdown fences:
             messages=[
                 {
                     "role": "system",
-                    "content": "You output only valid JSON. No markdown, no preamble, no explanation."
+                    "content": "You output only valid JSON. No markdown, no preamble, no explanation. Tags must be 100% specific to the given topic — never use generic placeholders."
                 },
                 {"role": "user", "content": prompt}
             ],
             temperature=0.65,
-            max_tokens=1400,
+            max_tokens=1800,  # Increased to accommodate longer descriptions
         )
 
         text = response.choices[0].message.content.strip()
@@ -113,14 +106,15 @@ Respond ONLY with valid JSON, no markdown fences:
 
         # Sanitise and enforce limits
         title = meta.get("title", topic_title)[:MAX_TITLE_LEN]
-        
+
         # Enforce number in title (backup if Groq doesn't comply)
         title = self._enforce_number_in_title(title)
         title = title[:MAX_TITLE_LEN]
 
         tags = meta.get("tags", [])
-        must_have = ["Shorts", "shorts", "space facts", "facts", "did you know",
-                     "science", "amazingfacts", "viral", "educational"]
+
+        # IMPROVEMENT: only inject truly universal platform tags, not topic-specific ones
+        must_have = ["Shorts", "shorts"]
         for t in must_have:
             if t not in tags:
                 tags.insert(0, t)
@@ -131,7 +125,7 @@ Respond ONLY with valid JSON, no markdown fences:
                 final_tags.append(t)
                 tag_budget += len(t) + 1
 
-        hashtags = meta.get("hashtags", ["#Shorts", "#SpaceFacts", "#DidYouKnow"])
+        hashtags = meta.get("hashtags", ["#Shorts", "#DidYouKnow", "#Facts"])
         hashtag_line = " ".join(hashtags[:8])
 
         description = meta.get("description", topic_fact)
@@ -148,5 +142,5 @@ Respond ONLY with valid JSON, no markdown fences:
             "default_language": "en",
         }
 
-        logger.info(f"SEO ready | title='{title}' | tags={len(final_tags)}")
+        logger.info(f"SEO ready | title='{title}' | tags={len(final_tags)} | desc_len={len(description)}")
         return result
