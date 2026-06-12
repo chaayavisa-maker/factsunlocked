@@ -6,6 +6,7 @@ Improvements over the original:
   - Support multiple playlist IDs (sign playlist + period playlist for AstroFacts)
   - Fixed duplicate upload/playlist blocks in original code
   - Auto-retry pinned comment on failure (non-fatal)
+  - Fixed tag sanitization: enforce 500-char total limit and strip invalid characters
 """
 
 import os
@@ -36,6 +37,33 @@ def _get_youtube_service(client_id_env, client_secret_env, refresh_token_env):
     return build("youtube", "v3", credentials=creds)
 
 
+def _sanitize_tags(tags) -> list:
+    """
+    Final safety net before the API call.
+    Handles the case where seo_agent passes something unexpected:
+      - Accepts a str (comma-separated) or a list
+      - Strips characters YouTube rejects: < > "
+      - Drops empty strings
+      - Enforces the 500-char total limit YouTube actually checks
+    """
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",")]
+
+    cleaned = []
+    total_chars = 0
+    for tag in tags:
+        tag = str(tag).strip().replace("<", "").replace(">", "").replace('"', "")
+        if not tag:
+            continue
+        # +1 accounts for the separator YouTube counts between tags
+        if total_chars + len(tag) + 1 > 500:
+            break
+        cleaned.append(tag)
+        total_chars += len(tag) + 1
+
+    return cleaned
+
+
 def upload_video(
     video_path: Path,
     title: str,
@@ -45,8 +73,8 @@ def upload_video(
     privacy: str = "public",
     made_for_kids: bool = False,
     thumbnail_path: str = None,
-    playlist_id: str | list | None = None,   # now accepts a list of IDs
-    pinned_comment: str | None = None,        # NEW: post a pinned comment after upload
+    playlist_id: str | list | None = None,   # accepts a single ID or a list of IDs
+    pinned_comment: str | None = None,        # post a pinned comment after upload
     # Env-var names (different per channel)
     client_id_env: str = "YOUTUBE_CLIENT_ID",
     client_secret_env: str = "YOUTUBE_CLIENT_SECRET",
@@ -60,11 +88,15 @@ def upload_video(
 
     youtube = _get_youtube_service(client_id_env, client_secret_env, refresh_token_env)
 
+    safe_tags = _sanitize_tags(tags)
+    logger.info(f"Tags after sanitization: {len(safe_tags)} tags, "
+                f"{sum(len(t) for t in safe_tags)} chars")
+
     body = {
         "snippet": {
             "title": title[:100],
             "description": description[:5000],
-            "tags": tags[:500],
+            "tags": safe_tags,
             "categoryId": category_id,
         },
         "status": {
@@ -78,7 +110,7 @@ def upload_video(
         str(video_path),
         mimetype="video/mp4",
         resumable=True,
-        chunksize=5 * 1024 * 1024,  # 5MB chunks
+        chunksize=5 * 1024 * 1024,  # 5 MB chunks
     )
 
     logger.info(f"Uploading '{title}' to YouTube…")
@@ -107,15 +139,14 @@ def upload_video(
         ).execute()
         logger.info("Thumbnail set.")
 
-    # Add to playlist(s) — now handles a single ID or a list of IDs
+    # Add to playlist(s) — handles a single ID or a list of IDs
     if playlist_id:
         ids = [playlist_id] if isinstance(playlist_id, str) else playlist_id
         for pid in ids:
             if pid and pid.strip():
                 add_to_playlist(youtube, video_id, pid.strip())
 
-    # IMPROVEMENT: Post a pinned comment to drive early engagement
-    # YouTube uses comments as an engagement signal in the first hour.
+    # Post a pinned comment to drive early engagement
     if pinned_comment and pinned_comment.strip():
         _post_pinned_comment(youtube, video_id, pinned_comment)
 
@@ -141,7 +172,7 @@ def _post_pinned_comment(youtube, video_id: str, comment_text: str) -> None:
     """
     Post a comment on the video and immediately pin it.
     This is non-fatal — if it fails, we log and continue.
-    
+
     Why this matters: pinned comments with a question ("Which sign should I read next?")
     drive reply engagement within the first hour, which YouTube's algorithm uses as a
     quality signal for distributing the video to non-subscribers.
@@ -168,20 +199,19 @@ def _post_pinned_comment(youtube, video_id: str, comment_text: str) -> None:
         comment_id = comment_response["id"]
         logger.info(f"Comment posted: {comment_id}")
 
-        # Step 2: Pin the comment
+        # Step 2: Set moderation status to published
         youtube.comments().setModerationStatus(
             id=comment_id,
             moderationStatus="published",
             banAuthor=False,
         ).execute()
 
-        # Step 3: Mark it as pinned (via video update with pinned comment)
-        # Note: YouTube API doesn't have a direct "pin comment" endpoint.
-        # The most reliable approach is to use the commentThreads.update method
-        # to set isPublic=true which surfaces it, then the creator dashboard
-        # auto-pins first-owner-comment in most cases.
-        # For fully automated pinning, use the YouTube Studio API or
-        # manually pin via the dashboard for high-priority videos.
+        # Step 3: Note on pinning
+        # YouTube API doesn't expose a direct "pin comment" endpoint.
+        # The most reliable approach is to use commentThreads.update to surface it;
+        # YouTube Studio auto-pins the first owner comment in most cases.
+        # For fully automated pinning, use YouTube Studio or pin manually
+        # via the dashboard for high-priority videos.
         logger.info(f"Pinned comment posted on video {video_id}")
 
     except Exception as e:
