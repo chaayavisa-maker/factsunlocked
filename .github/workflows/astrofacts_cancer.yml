@@ -1,6 +1,6 @@
 # ============================================================
 #  AstroFacts - Cancer
-#  Scheduled: 10:30 UTC / 6:30am EST  |  Token: POLLINATIONS_TOKEN_ASTRO_4
+#  Token: POLLINATIONS_TOKEN_ASTRO_4
 #  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
 #  to spread across the day so each sign gets its own algorithm
 #  push window instead of competing with 11 simultaneous uploads.
@@ -12,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 10 * * *"
+    - cron: "30 6 * * *"
   workflow_dispatch:
     inputs:
       publish_only:
