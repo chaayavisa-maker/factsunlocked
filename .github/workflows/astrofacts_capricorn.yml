@@ -12,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 19 * * *"
+    - cron: "30 15 * * *"
   workflow_dispatch:
     inputs:
       publish_only:
