@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────
+#  AstroMoon Weekly — "Moon & Stars Weekly" collective video
+#  Posts every Sunday at 06:00 UTC (good for US/EU audiences)
+# ─────────────────────────────────────────────────────────────
+name: AstroMoon Weekly
+
+on:
+  schedule:
+    - cron: "0 6 * * 0"   # Every Sunday at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      reference_date:
+        description: "Content date (YYYY-MM-DD, defaults to next Monday)"
+        required: false
+        default: ""
+
+jobs:
+  moon-weekly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install system deps (ffmpeg, fonts)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu
+
+      - name: Compute reference date
+        id: date
+        run: |
+          if [ -n "${{ github.event.inputs.reference_date }}" ]; then
+            echo "ref=${{ github.event.inputs.reference_date }}" >> "$GITHUB_OUTPUT"
+          else
+            # Next Monday
+            echo "ref=$(python -c "
+          from datetime import date, timedelta
+          today = date.today()
+          days = (0 - today.weekday()) % 7 or 7
+          print((today + timedelta(days=days)).isoformat())
+          ")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate + Publish Moon Weekly Video
+        env:
+          GROQ_API_KEY_ASTRO:          ${{ secrets.GROQ_API_KEY_ASTRO }}
+          POLLINATIONS_TOKEN:          ${{ secrets.POLLINATIONS_TOKEN }}
+          YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
+          YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
+          YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+        run: |
+          python src/astromoon_main.py \
+            --period weekly \
+            --dev \
+            --reference-date ${{ steps.date.outputs.ref }}

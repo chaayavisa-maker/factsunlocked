@@ -25,6 +25,7 @@ except ImportError:
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 SECRETS_FILE = Path(__file__).parent.parent / "client_secrets_astro.json"
