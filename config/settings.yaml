@@ -57,10 +57,10 @@ channels:
 
         # Period playlists — one video per sign per period goes here
         playlist_ids:
-          daily: ""      # Fill in: YouTube playlist ID for "Daily Horoscopes"
-          weekly: ""     # Fill in: YouTube playlist ID for "Weekly Horoscopes"
-          monthly: ""    # Fill in: YouTube playlist ID for "Monthly Horoscopes"
-          yearly: ""     # Fill in: YouTube playlist ID for "Yearly Horoscopes"
+          daily: "PLgXeGnW_FoPHS4ayOFYX9VCN18nwOvOOx"      # Fill in: YouTube playlist ID for "Daily Horoscopes"
+          weekly: "PLgXeGnW_FoPHGGiWOH3xT1Wzp7ZffjqI-"     # Fill in: YouTube playlist ID for "Weekly Horoscopes"
+          monthly: "PLgXeGnW_FoPHZZaoL_sszlT3H2OtwL7bj"    # Fill in: YouTube playlist ID for "Monthly Horoscopes"
+          yearly: "PLgXeGnW_FoPG4siYiHzer5upbDMydtfq"     # Fill in: YouTube playlist ID for "Yearly Horoscopes"
 
         # IMPROVEMENT: Sign-specific playlists.
         # Create one playlist per zodiac sign on your channel, then paste the IDs here.
