@@ -12,6 +12,9 @@
 |---|---|---|---|---|
 | **FactsUnlocked** | Amazing Facts | YouTube Shorts | 1 video/day | `GROQ_API_KEY` |
 | **AstroFacts** | Horoscopes | YouTube Shorts + TikTok | 12 daily + weekly + monthly + yearly | `GROQ_API_KEY_ASTRO` |
+| **AngelNumbers** *(new)* | Angel numbers / numerology | YouTube Shorts + TikTok | 12 daily | `GROQ_API_KEY_ANGEL` |
+
+AngelNumbers publishes **one video per recurring number sequence** (111, 222, 333 … 1111, 1212, 000) every day — the same 12-per-batch rhythm as AstroFacts, reusing every shared agent (images, narration, video, music, thumbnails) untouched. See `src/angelnumbers_main.py` and `config/angel_numbers.py`.
 
 AstroFacts publishes **one video per zodiac sign** per period — 12 daily, 12 weekly, 12 monthly, and 12 on Jan 1st.
 

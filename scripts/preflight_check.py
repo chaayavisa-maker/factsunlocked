@@ -225,13 +225,26 @@ def check_astrofacts(skip_youtube: bool = False, skip_tiktok: bool = False) -> l
     return results
 
 
+def check_angelnumbers(skip_youtube: bool = False, skip_tiktok: bool = False) -> list[bool]:
+    results = run_groq_checks("GROQ_API_KEY_ANGEL", "AngelNumbers")
+    results += run_youtube_checks(
+        "YOUTUBE_CLIENT_ID_ANGEL", "YOUTUBE_CLIENT_SECRET_ANGEL", "YOUTUBE_REFRESH_TOKEN_ANGEL",
+        label="AngelNumbers", section="②", skip=skip_youtube,
+    )
+    results += run_tiktok_checks(
+        "TIKTOK_CLIENT_KEY_ANGEL", "TIKTOK_CLIENT_SECRET_ANGEL", "TIKTOK_REFRESH_TOKEN_ANGEL",
+        label="AngelNumbers", section="③", skip=skip_tiktok,
+    )
+    return results
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Pre-flight credential check")
     parser.add_argument(
         "--channel",
-        choices=["factsunlocked", "astrofacts"],
+        choices=["factsunlocked", "astrofacts", "angelnumbers"],
         required=True,
     )
     parser.add_argument(
@@ -252,8 +265,10 @@ def main():
 
     if args.channel == "factsunlocked":
         results = check_factsunlocked(skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
-    else:
+    elif args.channel == "astrofacts":
         results = check_astrofacts(skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
+    else:
+        results = check_angelnumbers(skip_youtube=args.skip_youtube, skip_tiktok=args.skip_tiktok)
 
     # ── Summary ──────────────────────────────────────────────────────────────
     total  = len(results)

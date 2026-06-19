@@ -37,6 +37,19 @@ COLOR_PALETTES = {
             (255, 150, 200),   # Pink
         ],
         "text_color": (255, 255, 255),  # White
+    },
+    "angelnumbers": {
+        "bg_colors": [
+            (20, 14, 8),       # Deep warm brown-black
+            (30, 20, 5),       # Dark gold-brown
+            (10, 8, 15),       # Near-black indigo
+        ],
+        "accent_colors": [
+            (255, 215, 0),     # Gold
+            (255, 255, 255),   # White
+            (200, 170, 255),   # Soft lavender
+        ],
+        "text_color": (255, 255, 255),  # White
     }
 }
 
