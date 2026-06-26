@@ -154,9 +154,19 @@ class NarrationAgent:
 
         # The last clip is the outro — it's included in audio but excluded
         # from scene_durations (no matching image for it).
+        outro_duration = durations[-1]
         scene_durations = durations[:-1]
         scene_clips = clips[:-1]
         outro_clip = clips[-1]
+
+        # Absorb outro duration into the last scene so the last image keeps
+        # playing during the outro instead of freezing on a padded frame.
+        if scene_durations:
+            scene_durations[-1] += outro_duration
+            logger.info(
+                f"  Absorbed {outro_duration:.2f}s outro into last scene "
+                f"(last scene now {scene_durations[-1]:.2f}s)"
+            )
 
         # Concatenate all clips (including outro) into narration.mp3
         combined_path = workspace / "narration.mp3"

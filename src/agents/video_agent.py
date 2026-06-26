@@ -312,15 +312,9 @@ class VideoAgent:
         if result.returncode != 0:
             raise RuntimeError(f"Concat failed:\n{result.stderr.decode()}")
 
-        # ── FIX: Pad video to full narration length so the outro isn't cut ──
-        # narration.mp3 contains all clips including the outro, but raw_video
-        # only covers scene_durations (which excludes the outro clip).
-        # Without padding, -shortest would truncate narration at video end.
-        narration_duration = self._probe_duration(narration_path)
-        padded_video = str(ws / "video_padded.mp4")
-        self._pad_video_to_duration(raw_video, padded_video, narration_duration)
-
         # 3. Mix narration + optional background music
+        # scene_durations already includes outro time (absorbed by narration_agent),
+        # so raw_video duration matches narration_path — no padding needed.
         final_path = str(ws / "final_video.mp4")
 
         if music_path and os.path.exists(music_path):
@@ -335,7 +329,7 @@ class VideoAgent:
             )
             cmd = [
                 "ffmpeg", "-y",
-                "-i", padded_video,       # ← padded video
+                "-i", raw_video,
                 "-i", narration_path,
                 "-i", music_path,
                 "-filter_complex", audio_filter,
@@ -344,13 +338,12 @@ class VideoAgent:
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",
-                # No -shortest: padded_video already matches narration length
                 final_path
             ]
         else:
             cmd = [
                 "ffmpeg", "-y",
-                "-i", padded_video,       # ← padded video
+                "-i", raw_video,
                 "-i", narration_path,
                 "-map", "0:v",
                 "-map", "1:a",
