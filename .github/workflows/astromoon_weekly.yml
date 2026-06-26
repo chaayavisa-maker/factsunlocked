@@ -53,7 +53,7 @@ jobs:
       - name: Generate + Publish Moon Weekly Video
         env:
           GROQ_API_KEY_ASTRO:          ${{ secrets.GROQ_API_KEY_ASTRO }}
-          POLLINATIONS_TOKEN:          ${{ secrets.POLLINATIONS_TOKEN }}
+          POLLINATIONS_TOKEN:          ${{ secrets.POLLINATIONS_TOKEN_ANGEL }}
           YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
           YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
           YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
