@@ -32,7 +32,14 @@ class VideoAgent:
     # ------------------------------------------------------------------
     def _ken_burns(self, img_path: str, out_path: str, duration: float, zoom_in: bool = True):
         duration = max(duration, _MIN_SCENE_DURATION)
-        frames = int(duration * self.fps)
+        # NOTE: round (not int/truncate) the frame count. int() always
+        # truncates downward, so every scene came out up to 1/fps short of
+        # its target — a small bias that compounds scene after scene and
+        # leaves the video track increasingly behind the (exact-length)
+        # narration audio by the end of longer videos. round() keeps the
+        # per-scene error within +/-0.5 frames instead of a one-sided drift.
+        frames = max(1, round(duration * self.fps))
+        exact_duration = frames / self.fps
 
         if zoom_in:
             zoom_expr = "min(zoom+0.0004,1.12)"
@@ -56,13 +63,16 @@ class VideoAgent:
             "-loop", "1",
             "-i", img_path,
             "-vf", vf,
-            "-t", str(duration),
+            # Match -t to the same frame-quantized length the zoompan filter
+            # will actually produce, so this flag can't clip an extra frame.
+            "-t", f"{exact_duration:.6f}",
             *_ENCODE_FLAGS,
             out_path
         ]
         result = subprocess.run(cmd, capture_output=True)
         if result.returncode != 0:
             raise RuntimeError(f"Ken Burns failed:\n{result.stderr.decode()}")
+
 
     # ------------------------------------------------------------------
     # Caption overlay — bottom-third, word-wrapped, drop-shadow style
@@ -246,7 +256,17 @@ class VideoAgent:
         script: dict,
         scene_durations: list[float] | None = None,
         hook_text: str | None = None,
+        thumbnail_caption: str | None = None,
     ) -> str:
+        """
+        thumbnail_caption: pass a string (even "") when the caller has
+        PREPENDED a thumbnail frame to image_paths/scene_durations
+        (image_paths = [thumbnail] + scene_images). This inserts a matching
+        leading entry into the caption list so captions stay aligned 1:1
+        with image_paths instead of silently shifting every caption one
+        scene ahead of its narration audio (transcript/voice desync bug).
+        Leave as None if image_paths has no prepended thumbnail frame.
+        """
         ws = Path(workspace)
 
         scene_texts = (
@@ -258,7 +278,21 @@ class VideoAgent:
             + [script.get("payoff", "")]
         )
 
+        if thumbnail_caption is not None:
+            # A thumbnail frame was prepended to image_paths/scene_durations
+            # upstream — prepend a matching caption slot here so every
+            # caption still lines up with its own narration clip instead of
+            # the next one's.
+            scene_texts = [thumbnail_caption] + scene_texts
+
         n = len(image_paths)
+        if len(scene_texts) != n:
+            logger.warning(
+                f"scene_texts ({len(scene_texts)}) != image_paths ({n}) — "
+                f"padding/truncating. This can shift captions out of sync "
+                f"with narration; pass thumbnail_caption= if a thumbnail "
+                f"frame was prepended."
+            )
         scene_texts = scene_texts[:n]
         while len(scene_texts) < n:
             scene_texts.append("")

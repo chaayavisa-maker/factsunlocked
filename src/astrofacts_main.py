@@ -198,6 +198,7 @@ async def generate_sign(sign: str, period: str, reference_date: date) -> dict:
         script=script,
         scene_durations=scene_durations_with_thumb,
         hook_text=hook_text,
+        thumbnail_caption="",
     )
 
     music_credit = MusicAgent.get_credit() if music_path else ""
