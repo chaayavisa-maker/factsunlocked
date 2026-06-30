@@ -1,6 +1,6 @@
 # ============================================================
 #  AstroFacts - Capricorn
-#  Scheduled: 19:30 UTC / 3:30pm EST  |  Token: POLLINATIONS_TOKEN_ASTRO_4
+#  Scheduled: 12:30 UTC / 8:30am EDT  |  Token: POLLINATIONS_TOKEN_ASTRO_4
 #  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
 #  to spread across the day so each sign gets its own algorithm
 #  push window instead of competing with 11 simultaneous uploads.
@@ -12,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "30 15 * * *"
+    - cron: "30 12 * * *"
   workflow_dispatch:
     inputs:
       publish_only:

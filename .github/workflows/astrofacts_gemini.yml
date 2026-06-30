@@ -1,6 +1,6 @@
 # ============================================================
 #  AstroFacts - Gemini
-#  Scheduled: 09:00 UTC / 5am EST  |  Token: POLLINATIONS_TOKEN_ASTRO_3
+#  Scheduled: 04:20 UTC / 12:20am EDT  |  Token: POLLINATIONS_TOKEN_ASTRO_3
 #  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
 #  to spread across the day so each sign gets its own algorithm
 #  push window instead of competing with 11 simultaneous uploads.
@@ -12,7 +12,7 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 5  * * *"
+    - cron: "20 4 * * *"
   workflow_dispatch:
     inputs:
       publish_only:

@@ -1,25 +1,27 @@
 # ============================================================
-#  AstroFacts - Pisces
+#  AstroFacts - Weekly - Virgo
 #  Token: POLLINATIONS_TOKEN_ASTRO
-#  IMPROVED: rescheduled from original (01:00-05:00 UTC cluster)
-#  to spread across the day so each sign gets its own algorithm
-#  push window instead of competing with 11 simultaneous uploads.
+#  Runs every Friday at the SAME time-of-day as the Virgo daily
+#  workflow (7:50 UTC), generating the horoscope for the
+#  UPCOMING week (next Monday - Sunday), not the current one.
+#  Reference date is computed as "next monday" inside
+#  _base_astrofacts_weekly.yml / default_reference_date().
 # ============================================================
-name: "AstroFacts - Pisces"
+name: "AstroFacts - Weekly - Virgo"
 permissions:
   actions: read
   contents: read
 
 on:
   schedule:
-    - cron: "50 14 * * *"
+    - cron: "50 7 * * 5"
   workflow_dispatch:
     inputs:
       publish_only:
         description: >
           Re-publish without regenerating.
           Paste the artifact NAME from a previous run
-          (e.g. astrofacts-daily-pisces-2026-06-01).
+          (e.g. astrofacts-weekly-virgo-2026-06-01).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -34,10 +36,10 @@ on:
 
 jobs:
   run:
-    name: "Run base workflow for Pisces"
-    uses: ./.github/workflows/_base_astrofacts.yml
+    name: "Run weekly base workflow for Virgo"
+    uses: ./.github/workflows/_base_astrofacts_weekly.yml
     with:
-      sign:         "pisces"
+      sign:         "virgo"
       publish_only: ${{ github.event.inputs.publish_only || '' }}
       skip_youtube: ${{ github.event.inputs.skip_youtube == 'true' }}
       skip_tiktok:  ${{ github.event.inputs.skip_tiktok  == 'true' }}
