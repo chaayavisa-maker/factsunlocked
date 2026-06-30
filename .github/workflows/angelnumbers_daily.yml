@@ -1,33 +1,21 @@
-# ============================================================
-#  AstroMoon Weekly — "Moon & Stars Weekly" collective video
-#  Posts every Sunday at 06:00 UTC (good for US/EU audiences)
-#
-#  RESILIENT, JUST LIKE THE DAILY/WEEKLY HOROSCOPE WORKFLOWS:
-#  each step (generate / publish to YouTube / publish to TikTok)
-#  is its own job and can be re-run independently via
-#  workflow_dispatch — e.g. if YouTube upload fails, you can
-#  re-run only "publish_youtube" against the same artifact
-#  without regenerating the video.
-# ============================================================
-name: "AstroMoon Weekly"
+name: AngelNumbers – Daily (12 Numbers)
 permissions:
   actions: read
   contents: read
-
 on:
-  schedule:
-    - cron: "0 6 * * 0"   # Every Sunday at 06:00 UTC
+  #schedule:
+    #- cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
-      reference_date:
-        description: "Content date (YYYY-MM-DD). Leave blank for auto (next Monday)."
+      number:
+        description: "Regenerate & publish a single number (leave blank for all 12)"
         required: false
         default: ""
       publish_only:
-        description: >
+        description: |
           Re-publish without regenerating.
           Paste the artifact NAME from a previous run
-          (e.g. astromoon-weekly-2026-07-06).
+          (e.g. angelnumbers-daily-2026-06-01).
           Leave blank for a full generate + publish run.
         required: false
         default: ""
@@ -53,13 +41,13 @@ jobs:
         run: pip install httpx
       - name: Check all credentials
         env:
-          GROQ_API_KEY_ASTRO:            ${{ secrets.GROQ_API_KEY_ASTRO }}
-          YOUTUBE_CLIENT_ID_ASTRO:       ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
-          YOUTUBE_CLIENT_SECRET_ASTRO:   ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
-          YOUTUBE_REFRESH_TOKEN_ASTRO:   ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
-          TIKTOK_CLIENT_KEY_ASTRO:       ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
-          TIKTOK_CLIENT_SECRET_ASTRO:    ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
-          TIKTOK_REFRESH_TOKEN_ASTRO:    ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+          GROQ_API_KEY_ANGEL:            ${{ secrets.GROQ_API_KEY_ANGEL }}
+          YOUTUBE_CLIENT_ID_ANGEL:       ${{ secrets.YOUTUBE_CLIENT_ID_ANGEL }}
+          YOUTUBE_CLIENT_SECRET_ANGEL:   ${{ secrets.YOUTUBE_CLIENT_SECRET_ANGEL }}
+          YOUTUBE_REFRESH_TOKEN_ANGEL:   ${{ secrets.YOUTUBE_REFRESH_TOKEN_ANGEL }}
+          TIKTOK_CLIENT_KEY_ANGEL:       ${{ secrets.TIKTOK_CLIENT_KEY_ANGEL }}
+          TIKTOK_CLIENT_SECRET_ANGEL:    ${{ secrets.TIKTOK_CLIENT_SECRET_ANGEL }}
+          TIKTOK_REFRESH_TOKEN_ANGEL:    ${{ secrets.TIKTOK_REFRESH_TOKEN_ANGEL }}
         run: |
           SKIP_FLAGS=""
           if [ "${{ github.event.inputs.skip_youtube }}" = "true" ]; then
@@ -68,17 +56,14 @@ jobs:
           if [ "${{ github.event.inputs.skip_tiktok }}" = "true" ]; then
             SKIP_FLAGS="$SKIP_FLAGS --skip-tiktok"
           fi
-          # Moon reuses the astrofacts channel's credentials/style, so the
-          # astrofacts preflight check (GROQ/YouTube/TikTok _ASTRO secrets)
-          # is the right one to run here too.
-          python scripts/preflight_check.py --channel astrofacts $SKIP_FLAGS
+          python scripts/preflight_check.py --channel angelnumbers $SKIP_FLAGS
 
   generate:
-    name: "🎬 Generate video"
+    name: "🎬 Generate videos"
     needs: preflight
     if: ${{ github.event.inputs.publish_only == '' || github.event.inputs.publish_only == null }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 1500
     outputs:
       manifest_path: ${{ steps.run.outputs.manifest_path }}
       artifact_name: ${{ steps.run.outputs.artifact_name }}
@@ -90,56 +75,50 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-liberation fonts-dejavu
+          sudo apt-get install -y ffmpeg fonts-liberation
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-      - name: Compute reference date
-        id: date
-        run: |
-          if [ -n "${{ github.event.inputs.reference_date }}" ]; then
-            echo "ref=${{ github.event.inputs.reference_date }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=$(python -c "
-          from datetime import date, timedelta
-          today = date.today()
-          days = (0 - today.weekday()) % 7 or 7
-          print((today + timedelta(days=days)).isoformat())
-          ")" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Generate moon weekly video
+      - name: Generate all 12 angel numbers
         id: run
         env:
-          GROQ_API_KEY_ASTRO: ${{ secrets.GROQ_API_KEY_ASTRO }}
-          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
+          GROQ_API_KEY_ANGEL: ${{ secrets.GROQ_API_KEY_ANGEL }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN_ANGEL }}
           PYTHONPATH:         ${{ github.workspace }}
         run: |
-          REFERENCE_DATE="${{ steps.date.outputs.ref }}"
+          REFERENCE_DATE=$(date -u -d "tomorrow" +%Y-%m-%d)
           echo "Content reference date: $REFERENCE_DATE"
 
-          python src/astromoon_main.py \
-            --period weekly \
-            --reference-date "$REFERENCE_DATE"
+          NUMBER_ARG=""
+          if [ -n "${{ github.event.inputs.number }}" ]; then
+            NUMBER_ARG="--number ${{ github.event.inputs.number }}"
+          fi
 
-          MANIFEST=$(find workspace -name "manifest_weekly_*.json" | sort | tail -1)
+          python src/angelnumbers_main.py \
+            --reference-date "$REFERENCE_DATE" \
+            $NUMBER_ARG
+
+          MANIFEST=$(find workspace -name "manifest_angelnumbers_daily_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest_weekly_*.json found in workspace/ after generation."
+            echo "No manifest_angelnumbers_daily_*.json found in workspace/ after generation."
             exit 1
           fi
 
           DATE=$(echo "$MANIFEST" | grep -oP '\d{4}-\d{2}-\d{2}')
-          [ -z "$DATE" ] && DATE=$(date -u +%Y-%m-%d)
-          ARTIFACT="astromoon-weekly-${DATE}"
+          if [ -z "$DATE" ]; then
+            DATE=$(date -u +%Y-%m-%d)
+          fi
+          ARTIFACT="angelnumbers-daily-${DATE}"
 
           echo "manifest_path=$MANIFEST" >> "$GITHUB_OUTPUT"
-          echo "artifact_name=$ARTIFACT"  >> "$GITHUB_OUTPUT"
-          echo "✅ Manifest : $MANIFEST"
-          echo "✅ Artifact : $ARTIFACT"
+          echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
+          echo "Manifest : $MANIFEST"
+          echo "Artifact : $ARTIFACT"
       - name: Upload workspace artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.run.outputs.artifact_name }}
           path: workspace/
-          retention-days: 7
+          retention-days: 3
 
   resolve_artifact:
     name: "🔎 Resolve artifact name"
@@ -160,26 +139,21 @@ jobs:
           if [ -n "${{ github.event.inputs.publish_only }}" ]; then
             NORMALIZED=$(echo "${{ github.event.inputs.publish_only }}" | tr '_' '-')
             echo "artifact_name=$NORMALIZED" >> "$GITHUB_OUTPUT"
-            echo "✅ publish-only mode → $NORMALIZED"
             exit 0
           fi
           ARTIFACT="${{ needs.generate.outputs.artifact_name }}"
           if [ -n "$ARTIFACT" ]; then
             echo "artifact_name=$ARTIFACT" >> "$GITHUB_OUTPUT"
-            echo "✅ normal flow → $ARTIFACT"
             exit 0
           fi
-          echo "⚠️  generate output empty – querying API for latest astromoon-weekly-* artifact…"
           LATEST=$(gh api \
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
-            --jq '[.artifacts[] | select(.name | startswith("astromoon-weekly-")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
-          echo "🔍 API returned: '$LATEST'"
+            --jq '[.artifacts[] | select(.name | startswith("angelnumbers-daily-")) | select(.expired == false)] | sort_by(.created_at) | last | .name')
           if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-            echo "❌ No unexpired astromoon-weekly-* artifact found in this repo."
+            echo "No unexpired angelnumbers-daily-* artifact found."
             exit 1
           fi
           echo "artifact_name=$LATEST" >> "$GITHUB_OUTPUT"
-          echo "✅ fallback  → $LATEST"
 
   publish_youtube:
     name: "▶️ Publish to YouTube"
@@ -208,7 +182,7 @@ jobs:
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
             --jq '[.artifacts[] | select(.name == "'"$ARTIFACT_NAME"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
+            echo "Could not find non-expired artifact: $ARTIFACT_NAME"
             exit 1
           fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
@@ -224,22 +198,25 @@ jobs:
         run: |
           MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest found – aborting."
+            echo "No manifest found – aborting."
             exit 1
           fi
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
-          echo "✅ Resolved manifest: $MANIFEST"
       - name: Publish to YouTube
         env:
-          YOUTUBE_CLIENT_ID_ASTRO:     ${{ secrets.YOUTUBE_CLIENT_ID_ASTRO }}
-          YOUTUBE_CLIENT_SECRET_ASTRO: ${{ secrets.YOUTUBE_CLIENT_SECRET_ASTRO }}
-          YOUTUBE_REFRESH_TOKEN_ASTRO: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ASTRO }}
+          YOUTUBE_CLIENT_ID_ANGEL:     ${{ secrets.YOUTUBE_CLIENT_ID_ANGEL }}
+          YOUTUBE_CLIENT_SECRET_ANGEL: ${{ secrets.YOUTUBE_CLIENT_SECRET_ANGEL }}
+          YOUTUBE_REFRESH_TOKEN_ANGEL: ${{ secrets.YOUTUBE_REFRESH_TOKEN_ANGEL }}
           PYTHONPATH:                  ${{ github.workspace }}
         run: |
-          python src/astromoon_main.py \
-            --period weekly \
+          NUMBER_ARG=""
+          if [ -n "${{ github.event.inputs.number }}" ]; then
+            NUMBER_ARG="--number ${{ github.event.inputs.number }}"
+          fi
+          python src/angelnumbers_main.py \
             --publish-only "${{ steps.meta.outputs.manifest }}" \
-            --skip-tiktok
+            --skip-tiktok \
+            $NUMBER_ARG
 
   publish_tiktok:
     name: "🎵 Publish to TikTok"
@@ -268,7 +245,7 @@ jobs:
             "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
             --jq '[.artifacts[] | select(.name == "'"$ARTIFACT_NAME"'") | select(.expired == false)] | sort_by(.created_at) | last | .workflow_run.id')
           if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
-            echo "❌ Could not find non-expired artifact: $ARTIFACT_NAME"
+            echo "Could not find non-expired artifact: $ARTIFACT_NAME"
             exit 1
           fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
@@ -284,19 +261,22 @@ jobs:
         run: |
           MANIFEST=$(find workspace -name "manifest_*.json" | sort | tail -1)
           if [ -z "$MANIFEST" ]; then
-            echo "❌ No manifest found – aborting."
+            echo "No manifest found – aborting."
             exit 1
           fi
           echo "manifest=$MANIFEST" >> "$GITHUB_OUTPUT"
-          echo "✅ Resolved manifest: $MANIFEST"
       - name: Publish to TikTok
         env:
-          TIKTOK_CLIENT_KEY_ASTRO:     ${{ secrets.TIKTOK_CLIENT_KEY_ASTRO }}
-          TIKTOK_CLIENT_SECRET_ASTRO:  ${{ secrets.TIKTOK_CLIENT_SECRET_ASTRO }}
-          TIKTOK_REFRESH_TOKEN_ASTRO:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ASTRO }}
+          TIKTOK_CLIENT_KEY_ANGEL:     ${{ secrets.TIKTOK_CLIENT_KEY_ANGEL }}
+          TIKTOK_CLIENT_SECRET_ANGEL:  ${{ secrets.TIKTOK_CLIENT_SECRET_ANGEL }}
+          TIKTOK_REFRESH_TOKEN_ANGEL:  ${{ secrets.TIKTOK_REFRESH_TOKEN_ANGEL }}
           PYTHONPATH:                  ${{ github.workspace }}
         run: |
-          python src/astromoon_main.py \
-            --period weekly \
+          NUMBER_ARG=""
+          if [ -n "${{ github.event.inputs.number }}" ]; then
+            NUMBER_ARG="--number ${{ github.event.inputs.number }}"
+          fi
+          python src/angelnumbers_main.py \
             --publish-only "${{ steps.meta.outputs.manifest }}" \
-            --skip-youtube
+            --skip-youtube \
+            $NUMBER_ARG
