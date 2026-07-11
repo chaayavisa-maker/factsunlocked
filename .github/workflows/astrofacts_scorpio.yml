@@ -30,7 +30,7 @@ on:
       skip_tiktok:
         description: "Skip TikTok upload for this run (true/false)"
         required: false
-        default: "false"
+        default: "true"
 
 jobs:
   run:
