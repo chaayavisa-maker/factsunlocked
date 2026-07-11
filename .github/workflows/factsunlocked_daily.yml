@@ -6,7 +6,9 @@ permissions:
 
 on:
   schedule:
-    - cron: "0 14 * * *"          # every day at 14:00 UTC (10am EST / 7am PST — peak morning scroll)
+    - cron: "0 14 * * *"          # 10am EST / 7am PST — US morning scroll
+    - cron: "0 18 * * *"          # 2pm EST / 11am PST — lunch scroll
+    - cron: "0 1 * * *"           # 9pm EST / 6pm PST — evening scroll
   workflow_dispatch:
     inputs:
       publish_only:

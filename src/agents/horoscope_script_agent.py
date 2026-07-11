@@ -518,6 +518,8 @@ def generate_horoscope_script(
         f"You write with NARRATIVE FRAME: {style['label'].upper().replace('_', ' ')} — {style['frame']} "
         f"You ground every prediction in REAL planetary transits. "
         f"Your videos never sound like the previous one — each has a distinct dramatic shape. "
+        f"You almost never say the sign's name out loud in narration ({sign} appears at most once, "
+        f"in the hook or closing line only) — you address the viewer as 'you' instead. "
         f"Return ONLY valid JSON — no markdown fences, no preamble, no extra text."
     )
 
@@ -547,6 +549,10 @@ ANTI-REDUNDANCY RULES (STRICT — violations make the video unwatchable):
   to split their arc meaningfully between scenes.
 • The hook MUST be specific to this {sign} + this {period}'s dominant transit — not a generic opener.
 • The closing affirmation MUST be logically derived from the planetary data, not a generic pep talk.
+• NAME LIMIT: say "{sign}" out loud in the SPOKEN narration at most ONCE across all {scenes_count} scenes
+  (ideally in the hook or the closing line only). In every other scene, address the viewer as "you" —
+  never repeat the sign's name as a crutch. (The title, description, and tags may still use "{sign}"
+  as many times as needed for SEO — this limit applies ONLY to spoken narration.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SCENE VOICE ASSIGNMENTS (each scene uses a DIFFERENT rhetorical device):

@@ -156,6 +156,9 @@ ANTI-REDUNDANCY RULES (STRICT):
 • No consecutive scenes may begin with the same word or phrase.
 • Each scene must add NEW information — no restating the previous scene's point.
 • The closing affirmation MUST be logically derived from {number}'s meaning above, not generic.
+• NAME LIMIT: say the number "{number}" out loud in the SPOKEN narration at most TWICE across all
+  {scenes_count} scenes (e.g. hook + closing only) — everywhere else refer to "this number" or address
+  the viewer as "you". (Title/description/tags may still use "{number}" freely for SEO.)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SCENE VOICE ASSIGNMENTS:

@@ -6,9 +6,9 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Thumbnail dimensions: YouTube standard
-THUMBNAIL_WIDTH = 1280
-THUMBNAIL_HEIGHT = 720
+# Thumbnail dimensions: YouTube Shorts / TikTok vertical format
+THUMBNAIL_WIDTH = 1080
+THUMBNAIL_HEIGHT = 1920
 
 # Color palettes for different content types
 COLOR_PALETTES = {
@@ -83,9 +83,9 @@ class ThumbnailAgent:
         
         # Try to load a bold font, fall back to default if not available
         try:
-            self.font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 90)
-            self.font_subtitle = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 50)
-            self.font_accent = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 140)
+            self.font_title = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 110)
+            self.font_subtitle = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 58)
+            self.font_accent = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 170)
         except (OSError, TypeError):
             # Fall back to default font
             self.font_title = ImageFont.load_default()
@@ -195,9 +195,9 @@ class ThumbnailAgent:
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
 
-        # Center horizontally, place in upper-middle
+        # Center horizontally, keep in upper-middle third (clear of bottom UI overlays)
         x = (THUMBNAIL_WIDTH - text_width) // 2
-        y = (THUMBNAIL_HEIGHT - text_height) // 2 - 80
+        y = (THUMBNAIL_HEIGHT // 3) - (text_height // 2)
 
         # Draw shadow
         draw.text((x + 3, y + 3), wrapped, font=self.font_title, fill=(0, 0, 0, 200))
@@ -215,7 +215,7 @@ class ThumbnailAgent:
         text_height = bbox[3] - bbox[1]
 
         x = (THUMBNAIL_WIDTH - text_width) // 2
-        y = THUMBNAIL_HEIGHT - 150
+        y = THUMBNAIL_HEIGHT - 260
 
         # Draw with accent color
         draw.text((x + 2, y + 2), subtitle, font=self.font_subtitle, fill=(0, 0, 0, 150))

@@ -95,6 +95,8 @@ Rules:
 - Tone: mystical, empowering, personal — speak directly to "you"
 - Each scene narration must be self-contained and punchy
 - End every scene with forward momentum, never doom and gloom
+- NAME LIMIT: say "{moon_phase}" out loud at most twice across the hook + 5 scenes combined —
+  everywhere else say "this phase" / "this energy" or just speak directly to "you"
 - Return ONLY the JSON, no preamble, no markdown fences"""
 
     raw = call_groq(prompt, api_key_env=api_key_env)
