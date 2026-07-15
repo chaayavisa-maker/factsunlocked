@@ -223,7 +223,7 @@ class NarrationAgent:
             segments.append(("payoff", payoff))
 
         # Outro CTA
-        outro = script.get("outro", "Subscribe for more mind-blowing facts every day!")
+        outro = script.get("outro", "Subscribe for a new fact every day!")
         segments.append(("outro", outro))
 
         # ── Generate clips ────────────────────────────────────────────────

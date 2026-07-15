@@ -94,8 +94,8 @@ payoff — 1 sentence, 15–20 words. The gut-punch finale.
   It must feel like a twist — reward viewers for watching to the end.
 
 outro — 1 short sentence, call to action. Max 12 words. Warm but urgent.
-  Vary from: "Follow for more mind-blowing facts every day."
-  Try: "Drop a 🤯 if this just broke your brain." or "Save this — you'll want to share it."
+  NEVER use "if this blew/blows/blown your mind" or any "mind-blowing" / "mind blown" phrasing — it's overused and banned.
+  Try instead: "Save this — you'll want to share it." or "Follow for a new one every day." or "Which fact surprised you most? Tell me below."
 
 title — max 60 characters. Include a power word (Shocking / Secret / Insane / Hidden / Real Truth).
   Must feel clickable and specific to THIS topic.
@@ -141,7 +141,7 @@ Topic: {topic}"""
         if "payoff" not in script:
             script["payoff"] = "And this discovery is changing everything scientists thought they knew."
         if "outro" not in script:
-            script["outro"] = "Follow for a mind-bending fact every day."
+            script["outro"] = "Follow for a new fact every day."
         if "title" not in script:
             script["title"] = f"The Shocking Truth About {topic.title()}"
         if "image_queries" not in script or len(script["image_queries"]) < self.scenes_count:

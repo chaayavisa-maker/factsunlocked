@@ -65,16 +65,25 @@ class ImageAgent:
         logger.info(f"  ⏳ Waiting {delay}s before retry…")
         time.sleep(delay)
 
-    def _download(self, url: str, save_path: str, attempt_label: str = "") -> bool:
-        balance_wait_done = False   # wait at most 1 hour per image for balance recharge
+    def _download(self, url: str, save_path: str, attempt_label: str = "", allow_token: bool = True) -> bool:
+        # NOTE: Pollinations retired the passive hourly Pollen drip in 2026 — a 402
+        # "insufficient balance" no longer refills itself if you just wait, so we no
+        # longer sleep for an hour hoping it will. Instead, on a balance error we drop
+        # the paid add-ons (token / enhance / nologo) for the rest of THIS image and
+        # retry on the plain Flux endpoint, which Pollinations documents as free and
+        # unlimited regardless of Pollen balance. See:
+        # https://github.com/pollinations/pollinations/blob/master/enter.pollinations.ai/POLLEN_FAQ.md
+        dropped_token = not allow_token
 
         for attempt in range(self.max_retries):
             try:
-                resp = requests.get(url, headers=_HEADERS, timeout=self.timeout, stream=True)
+                req_url = url if allow_token else self._strip_paid_params(url)
+                resp = requests.get(req_url, headers=_HEADERS, timeout=self.timeout, stream=True)
                 if resp.status_code == 200 and len(resp.content) > 10_000:
                     with open(save_path, "wb") as f:
                         f.write(resp.content)
-                    logger.info(f"  ✓ Image saved ({len(resp.content)//1024}KB) {attempt_label}")
+                    tag = attempt_label + (" [free tier]" if dropped_token else "")
+                    logger.info(f"  ✓ Image saved ({len(resp.content)//1024}KB) {tag}")
                     return True
 
                 body_hint = ""
@@ -92,16 +101,22 @@ class ImageAgent:
                     except Exception:
                         msg = ""
 
-                    if "Insufficient balance" in msg and not balance_wait_done:
+                    if allow_token and ("Insufficient balance" in msg or "balance" in msg.lower()):
                         logger.warning(
-                            "  💰 Insufficient balance — waiting 1 hour for credits to recharge…"
+                            "  💰 Insufficient Pollen balance — dropping token/enhance and "
+                            "retrying on the free, unlimited anonymous Flux endpoint."
                         )
-                        time.sleep(3600)
-                        balance_wait_done = True
-                        continue   # retry immediately after the wait, no extra backoff
+                        allow_token = False
+                        dropped_token = True
+                        continue  # retry immediately on the free path, no sleep needed
 
-                    # queue full or other 402 — exponential backoff
+                    # queue full or other 402 — short exponential backoff
                     self._backoff(attempt, base=15)
+                elif resp.status_code == 429:
+                    # Anonymous/free tier is rate-limited (documented as roughly one
+                    # request per ~15s), not balance-limited — a short wait clears it.
+                    logger.warning("  🚦 Rate limited — waiting for the anonymous-tier window to clear.")
+                    time.sleep(20)
                 else:
                     self._backoff(attempt, base=5)
 
@@ -110,13 +125,26 @@ class ImageAgent:
                 self._backoff(attempt)
         return False
 
+    @staticmethod
+    def _strip_paid_params(url: str) -> str:
+        """Remove key/enhance/nologo (Pollen-costing add-ons) to fall back to the
+        free anonymous Flux endpoint, which Pollinations documents as unlimited."""
+        for param in ("&nologo=true", "&enhance=true"):
+            url = url.replace(param, "")
+        import re
+        url = re.sub(r"&key=[^&]*", "", url)
+        return url
+
     def generate_all(self, script: dict, workspace: Path) -> list:
         queries = script.get("image_queries", [])
         image_paths = []
 
         for i, query in enumerate(queries):
             if i > 0:
-                time.sleep(3)
+                # Pollinations' documented anonymous-tier cadence is roughly one
+                # request per ~15s; pacing to it up front avoids most 429s rather
+                # than just reacting to them after the fact.
+                time.sleep(15 if not self._token else 5)
 
             save_path  = str(workspace / f"image_{i:02d}.jpg")
             seed       = _SEEDS[i % len(_SEEDS)]

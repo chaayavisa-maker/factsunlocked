@@ -1,8 +1,26 @@
 import json
 import os
 import random
+import xml.etree.ElementTree as ET
 from pathlib import Path
+
+import requests
 from groq import Groq
+
+# ---------------------------------------------------------------------------
+# Trending / current-events sourcing (Google News RSS — free, no API key).
+# We stick to Science & Technology sections so headlines stay compatible with
+# a "fascinating fact" Shorts format instead of drifting into hard news/politics.
+# ---------------------------------------------------------------------------
+_TRENDING_FEEDS = [
+    "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=en-US&gl=US&ceid=US:en",
+]
+_TRENDING_TIMEOUT = 8
+# Fraction of runs that should try to anchor on a real current headline
+# before falling back to the evergreen topic pool.
+_TRENDING_PROBABILITY = 0.6
 
 
 # ---------------------------------------------------------------------------
@@ -146,10 +164,102 @@ class TopicAgent:
         history = self._load_history()
         recent = history[-_HISTORY_WINDOW:]
 
-        topic = self._llm_topic(recent) or self._fallback_topic(recent)
+        topic = (
+            self._trending_topic(recent)
+            or self._llm_topic(recent)
+            or self._fallback_topic(recent)
+        )
         self._save_history(history, topic)
         print(f"  📌 Topic selected: '{topic}'")
         return topic
+
+    # ------------------------------------------------------------------
+    # Trending: pull real current headlines and adapt one into a topic
+    # ------------------------------------------------------------------
+    def _fetch_trending_headlines(self, limit: int = 20) -> list[str]:
+        headlines: list[str] = []
+        feeds = list(_TRENDING_FEEDS)
+        random.shuffle(feeds)
+        for feed_url in feeds:
+            try:
+                resp = requests.get(
+                    feed_url,
+                    timeout=_TRENDING_TIMEOUT,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                resp.raise_for_status()
+                root = ET.fromstring(resp.content)
+                for item in root.findall(".//item"):
+                    title_el = item.find("title")
+                    if title_el is None or not title_el.text:
+                        continue
+                    # Google News titles look like "Headline - Publisher"; drop the source.
+                    title = title_el.text.rsplit(" - ", 1)[0].strip()
+                    if title and title not in headlines:
+                        headlines.append(title)
+            except Exception as e:
+                print(f"  ⚠ Trending feed failed ({feed_url}): {e}")
+            if len(headlines) >= limit:
+                break
+        return headlines[:limit]
+
+    def _trending_topic(self, recent: list[str]) -> str | None:
+        if random.random() > _TRENDING_PROBABILITY:
+            return None  # keep some evergreen variety even when trending works
+
+        headlines = self._fetch_trending_headlines()
+        if not headlines:
+            return None
+
+        sample = random.sample(headlines, min(8, len(headlines)))
+        exclusion_note = ""
+        if recent:
+            exclusion_note = (
+                "\n\nDo NOT reuse any of these recently used topics:\n"
+                + "\n".join(f"- {t}" for t in recent)
+            )
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You turn real current news headlines into a single specific, "
+                            "fascinating YouTube Shorts fact-video topic. "
+                            "Output ONLY the topic name — no explanation, no punctuation, no markdown. "
+                            "If NONE of the headlines can be turned into a genuinely fascinating, "
+                            "surprising, evergreen-feeling FACT (as opposed to routine news like "
+                            "earnings, politics, or sports scores), output exactly: NONE."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Here are today's real headlines:\n"
+                            + "\n".join(f"- {h}" for h in sample)
+                            + "\n\nPick ONE and turn it into a specific, concrete topic for a "
+                            "fascinating-facts Shorts video — something that lets the video explain "
+                            "the surprising science, history, or mechanism behind what's currently "
+                            "in the news. Keep it grounded in the real story, not generic."
+                            + exclusion_note
+                        ),
+                    },
+                ],
+                temperature=0.9,
+                max_tokens=30,
+            )
+            topic = response.choices[0].message.content.strip().strip("\"'.").lower()
+            if not topic or topic == "none" or len(topic) > 90:
+                return None
+            if any(topic == r.lower() for r in recent):
+                return None
+            print(f"  📰 Trending topic derived from current headlines")
+            return topic
+        except Exception as e:
+            print(f"  ⚠ Trending topic generation failed: {e} — falling back")
+            return None
 
     # ------------------------------------------------------------------
     # LLM pick with exclusion list + category rotation
